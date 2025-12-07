@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+
+{% block navigation %}
+<nav class="bg-blue-600 text-white border-t border-blue-700">
+    <div class="container mx-auto px-6">
+        <ul class="flex justify-end items-center space-x-6 py-3">
+            {% for link in nav_links %}
+            <li>
+                {% url link.url as link_url %}
+                {% if link.name == 'logout' %}
+                    <form method="post" action="{{ link_url }}" class="inline">
+                        {% csrf_token %}
+                        <button type="submit"
+                                class="hover:text-blue-200 transition-colors duration-200 bg-transparent border-0 cursor-pointer">
+                            {{ link.text }}
+                        </button>
+                    </form>
+                {% else %}
+                    <a href="{{ link_url }}"
+                       class="hover:text-blue-200 transition-colors duration-200 {% if request.resolver_match.url_name == link.name or request.path == link_url %}underline font-semibold{% endif %}">
+                        {{ link.text }}
+                    </a>
+                {% endif %}
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+</nav>
+{% endblock %}

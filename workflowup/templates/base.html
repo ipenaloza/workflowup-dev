@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}WorkflowUp{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen flex flex-col">
+    <!-- Header -->
+    <header class="bg-blue-600 text-white py-4 px-6">
+        <div class="container mx-auto flex justify-between items-center">
+            <div class="text-xl font-semibold">
+                WorkflowUp
+            </div>
+            {% if user.is_authenticated %}
+            <div class="text-sm">
+                {{ user.first_name }} {{ user.last_name }} ({{ user.role }})
+            </div>
+            {% endif %}
+        </div>
+    </header>
+
+    <!-- Navigation (only for authenticated users) -->
+    {% block navigation %}{% endblock %}
+
+    <!-- Main Content -->
+    <main class="flex-grow container mx-auto px-6 py-8">
+        <!-- Messages -->
+        {% if messages %}
+        <div class="mb-4">
+            {% for message in messages %}
+            <div class="{% if message.tags == 'error' %}bg-red-100 border-red-400 text-red-700{% elif message.tags == 'success' %}bg-green-100 border-green-400 text-green-700{% elif message.tags == 'warning' %}bg-yellow-100 border-yellow-400 text-yellow-700{% else %}bg-blue-100 border-blue-400 text-blue-700{% endif %} px-4 py-3 rounded border mb-2" role="alert">
+                <span class="block sm:inline">{{ message }}</span>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <!-- Page Content -->
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-blue-600 text-white py-4 px-6 mt-auto">
+        <div class="container mx-auto text-center text-sm">
+            2025 - Proyecto de titulo de Iván Peñaloza (i.pealozazamora@uandresbello.edu)
+        </div>
+    </footer>
+</body>
+</html>
