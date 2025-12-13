@@ -25,6 +25,10 @@ def navigation_context(request):
     # Workflow link for all authenticated users
     links.append({'url': 'workflow:dashboard', 'text': 'Workflow', 'name': 'dashboard'})
 
+    # Add "Crear Workflow" link for Jefe de Proyecto
+    if request.user.role == 'Jefe de Proyecto':
+        links.append({'url': 'workflow:workflow_create', 'text': 'Crear Workflow', 'name': 'workflow_create'})
+
     # Password change link
     links.append({'url': 'password_change', 'text': 'Cambiar Contraseña', 'name': 'password_change'})
 

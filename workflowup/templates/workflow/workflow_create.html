@@ -1,0 +1,104 @@
+{% extends "base_authenticated.html" %}
+
+{% block title %}Crear Workflow - WorkflowUp{% endblock %}
+
+{% block content %}
+<div class="bg-white rounded-lg shadow-md p-8 max-w-4xl mx-auto">
+    <h2 class="text-3xl font-bold text-gray-800 mb-6">Crear Nuevo Workflow</h2>
+
+    <form method="post" class="space-y-6">
+        {% csrf_token %}
+
+        {% if form.non_field_errors %}
+        <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
+            {{ form.non_field_errors }}
+        </div>
+        {% endif %}
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+                <label for="{{ form.id_proyecto.id_for_label }}" class="block text-sm font-medium text-gray-700">
+                    {{ form.id_proyecto.label }}
+                </label>
+                {{ form.id_proyecto }}
+                {% if form.id_proyecto.errors %}
+                <p class="mt-1 text-sm text-red-600">{{ form.id_proyecto.errors.0 }}</p>
+                {% endif %}
+            </div>
+
+            <div>
+                <label for="{{ form.componente.id_for_label }}" class="block text-sm font-medium text-gray-700">
+                    {{ form.componente.label }}
+                </label>
+                {{ form.componente }}
+                {% if form.componente.errors %}
+                <p class="mt-1 text-sm text-red-600">{{ form.componente.errors.0 }}</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <div>
+            <label for="{{ form.nom_proyecto.id_for_label }}" class="block text-sm font-medium text-gray-700">
+                {{ form.nom_proyecto.label }}
+            </label>
+            {{ form.nom_proyecto }}
+            {% if form.nom_proyecto.errors %}
+            <p class="mt-1 text-sm text-red-600">{{ form.nom_proyecto.errors.0 }}</p>
+            {% endif %}
+        </div>
+
+        <div>
+            <label for="{{ form.desc_proyecto.id_for_label }}" class="block text-sm font-medium text-gray-700">
+                {{ form.desc_proyecto.label }}
+            </label>
+            {{ form.desc_proyecto }}
+            {% if form.desc_proyecto.errors %}
+            <p class="mt-1 text-sm text-red-600">{{ form.desc_proyecto.errors.0 }}</p>
+            {% endif %}
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+                <label for="{{ form.qa_estimado.id_for_label }}" class="block text-sm font-medium text-gray-700">
+                    {{ form.qa_estimado.label }}
+                </label>
+                {{ form.qa_estimado }}
+                {% if form.qa_estimado.errors %}
+                <p class="mt-1 text-sm text-red-600">{{ form.qa_estimado.errors.0 }}</p>
+                {% endif %}
+            </div>
+
+            <div>
+                <label for="{{ form.pap_estimado.id_for_label }}" class="block text-sm font-medium text-gray-700">
+                    {{ form.pap_estimado.label }}
+                </label>
+                {{ form.pap_estimado }}
+                {% if form.pap_estimado.errors %}
+                <p class="mt-1 text-sm text-red-600">{{ form.pap_estimado.errors.0 }}</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <div>
+            <label for="{{ form.release.id_for_label }}" class="block text-sm font-medium text-gray-700">
+                {{ form.release.label }}
+            </label>
+            {{ form.release }}
+            {% if form.release.errors %}
+            <p class="mt-1 text-sm text-red-600">{{ form.release.errors.0 }}</p>
+            {% endif %}
+        </div>
+
+        <div class="flex justify-end space-x-3 pt-4">
+            <a href="{% url 'workflow:dashboard' %}"
+               class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded transition-colors duration-200">
+                Cancelar
+            </a>
+            <button type="submit"
+                    class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded transition-colors duration-200">
+                Crear Workflow
+            </button>
+        </div>
+    </form>
+</div>
+{% endblock %}
