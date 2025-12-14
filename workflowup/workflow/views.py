@@ -167,6 +167,37 @@ def dashboard(request):
         }
         return render(request, 'workflow/dashboard_rm.html', context)
 
+    elif request.user.role == 'QA':
+        # Get all workflows with QA process in progress
+        all_workflows = Workflow.objects.all().prefetch_related('actividades')
+
+        qa_workflows = []
+        for workflow in all_workflows:
+            # Verify general workflow state
+            ultima_actividad = workflow.get_actividad_workflow()
+            if ultima_actividad and ultima_actividad.estado_workflow == 'Activo':
+                # Check if QA process is in progress
+                actividad_qa = workflow.get_actividad_qa()
+                if actividad_qa and actividad_qa.estado_proceso == 'En Proceso':
+                    qa_workflows.append(workflow)
+
+        # Prepare data for display
+        workflow_data = []
+        for workflow in qa_workflows:
+            ultima_actividad = workflow.get_actividad_workflow()
+            actividad_qa = workflow.get_actividad_qa()
+            workflow_data.append({
+                'workflow': workflow,
+                'estado_workflow': ultima_actividad.estado_workflow if ultima_actividad else 'N/A',
+                'proceso': actividad_qa.proceso if actividad_qa else 'N/A',
+                'actividad': actividad_qa.actividad if actividad_qa else 'N/A',
+            })
+
+        context = {
+            'workflow_data': workflow_data,
+        }
+        return render(request, 'workflow/dashboard_qa.html', context)
+
     # Default dashboard for other roles
     context = {
         'user': request.user,
@@ -260,6 +291,29 @@ def workflow_detail(request, id_workflow):
         )
 
         messages.success(request, 'Workflow cancelado exitosamente.')
+        return redirect('workflow:workflow_detail', id_workflow=id_workflow)
+
+    # Handle workflow closure
+    if request.method == 'POST' and 'close_workflow' in request.POST:
+        comentario = request.POST.get('comentario', '').strip()
+
+        # Get the next id_actividad
+        max_id = workflow.actividades.aggregate(Max('id_actividad'))['id_actividad__max']
+        next_id = (max_id or 0) + 1
+
+        # Create closure activity
+        Actividad.objects.create(
+            workflow=workflow,
+            id_actividad=next_id,
+            usuario=request.user.username,
+            estado_workflow='Cerrado',
+            proceso='',
+            estado_proceso='',
+            actividad='Workflow cerrado exitosamente',
+            comentario=comentario if comentario else None
+        )
+
+        messages.success(request, 'Workflow cerrado exitosamente.')
         return redirect('workflow:workflow_detail', id_workflow=id_workflow)
 
     # Handle process requests (linea base, RM Rev, Diff Info, QA)
@@ -357,10 +411,16 @@ def workflow_detail(request, id_workflow):
     )
 
     # Button 4: Solicitar Pruebas de QA
+    # Activo si: Diff Info='Ok' Y QA NO está aprobado
+    # Inactivo si: QA ya está aprobado (proceso='QA' y estado_proceso='Ok')
     btn4_enabled = (
         (actividad_scm2 and actividad_scm2.estado_proceso == 'Ok') or
         (actividad_qa and actividad_qa.estado_proceso == 'No Ok')
-    )
+    ) and not (actividad_qa and actividad_qa.estado_proceso == 'Ok')
+
+    # Button 5: Cerrar Workflow
+    # Solo activo si QA tiene proceso='QA' y estado_proceso='Ok'
+    btn5_enabled = actividad_qa and actividad_qa.estado_proceso == 'Ok'
 
     context = {
         'workflow': workflow,
@@ -374,6 +434,7 @@ def workflow_detail(request, id_workflow):
         'btn2_enabled': btn2_enabled,
         'btn3_enabled': btn3_enabled,
         'btn4_enabled': btn4_enabled,
+        'btn5_enabled': btn5_enabled,
         'release_form': ReleaseUpdateForm(instance=workflow),
         'fechas_form': FechasUpdateForm(instance=workflow),
     }
@@ -402,7 +463,7 @@ def plan_pruebas(request, id_workflow):
             prueba = form.save(commit=False)
             prueba.workflow = workflow
             prueba.id_prueba = next_id
-            prueba.avance = '0%'
+            prueba.avance = 0
             prueba.resultado = 'No iniciado'
             prueba.save()
 
@@ -676,3 +737,226 @@ def workflow_detail_rm(request, id_workflow):
         'btn_ok_enabled': btn_ok_enabled,
     }
     return render(request, 'workflow/workflow_detail_rm.html', context)
+
+
+@login_required
+def workflow_detail_qa(request, id_workflow):
+    """
+    View workflow details for QA role.
+    Handles test plan management and QA approval/rejection actions.
+    """
+    workflow = get_object_or_404(Workflow, id_workflow=id_workflow)
+
+    # Verify user has QA role
+    if request.user.role != 'QA':
+        raise PermissionDenied("Solo usuarios con rol QA pueden acceder a esta vista.")
+
+    # Get process activities
+    actividad_workflow = workflow.get_actividad_workflow()
+    actividad_qa = workflow.get_actividad_qa()
+
+    # Verify this workflow is in a state where QA can act
+    if not actividad_workflow or actividad_workflow.estado_workflow != 'Activo':
+        raise PermissionDenied("Este workflow no está activo.")
+
+    # Verify QA process is active
+    if not actividad_qa or actividad_qa.estado_proceso != 'En Proceso':
+        raise PermissionDenied("No hay pruebas QA pendientes para este workflow.")
+
+    # Handle "Enviar Ok" button
+    if request.method == 'POST' and 'enviar_ok' in request.POST:
+        # Validation: All tests must have resultado='Aprobado'
+        pruebas = workflow.plan_pruebas.all()
+        if not pruebas.exists():
+            messages.error(request, 'No hay pruebas en el plan de pruebas.')
+            return redirect('workflow:workflow_detail_qa', id_workflow=id_workflow)
+
+        # Check if all tests are approved
+        all_approved = all(prueba.resultado == 'Aprobado' for prueba in pruebas)
+        if not all_approved:
+            messages.error(request, 'No se puede aprobar el workflow. Todas las pruebas deben tener resultado "Aprobado".')
+            return redirect('workflow:workflow_detail_qa', id_workflow=id_workflow)
+
+        comentario = request.POST.get('comentario', '')
+
+        # Get the next id_actividad
+        max_id = workflow.actividades.aggregate(Max('id_actividad'))['id_actividad__max']
+        next_id = (max_id or 0) + 1
+
+        # Create the approval activity
+        Actividad.objects.create(
+            workflow=workflow,
+            id_actividad=next_id,
+            usuario=request.user.username,
+            estado_workflow='Activo',
+            proceso='QA',
+            estado_proceso='Ok',
+            actividad='Aprobado por QA',
+            comentario=comentario if comentario else None
+        )
+
+        messages.success(request, 'Workflow aprobado por QA exitosamente.')
+        return redirect('workflow:dashboard')
+
+    # Handle "Enviar No Ok" button
+    if request.method == 'POST' and 'enviar_no_ok' in request.POST:
+        # Validation: At least one test must have resultado='No aprobado'
+        pruebas = workflow.plan_pruebas.all()
+        has_rejected = any(prueba.resultado == 'No aprobado' for prueba in pruebas)
+
+        if not has_rejected:
+            messages.error(request, 'No se puede rechazar el workflow. Al menos una prueba debe tener resultado "No aprobado".')
+            return redirect('workflow:workflow_detail_qa', id_workflow=id_workflow)
+
+        comentario = request.POST.get('comentario', '').strip()
+
+        # Validation: Comment is MANDATORY for rejection
+        if not comentario:
+            messages.error(request, 'El comentario es obligatorio para rechazar. Por favor, ingrese el motivo del rechazo.')
+            return redirect('workflow:workflow_detail_qa', id_workflow=id_workflow)
+
+        # Get the next id_actividad
+        max_id = workflow.actividades.aggregate(Max('id_actividad'))['id_actividad__max']
+        next_id = (max_id or 0) + 1
+
+        # Create the rejection activity
+        Actividad.objects.create(
+            workflow=workflow,
+            id_actividad=next_id,
+            usuario=request.user.username,
+            estado_workflow='Activo',
+            proceso='QA',
+            estado_proceso='No Ok',
+            actividad='Rechazado por QA',
+            comentario=comentario
+        )
+
+        messages.success(request, 'Workflow rechazado por QA exitosamente.')
+        return redirect('workflow:dashboard')
+
+    # Get all activities and tests for display
+    actividades = workflow.actividades.all()
+    pruebas = workflow.plan_pruebas.all()
+
+    # Determine button states
+    # "Enviar Ok" enabled only if ALL tests have resultado='Aprobado'
+    btn_ok_enabled = pruebas.exists() and all(prueba.resultado == 'Aprobado' for prueba in pruebas)
+
+    # "Enviar No Ok" enabled only if AT LEAST ONE test has resultado='No aprobado'
+    btn_no_ok_enabled = any(prueba.resultado == 'No aprobado' for prueba in pruebas)
+
+    context = {
+        'workflow': workflow,
+        'actividades': actividades,
+        'pruebas': pruebas,
+        'actividad_workflow': actividad_workflow,
+        'actividad_qa': actividad_qa,
+        'btn_ok_enabled': btn_ok_enabled,
+        'btn_no_ok_enabled': btn_no_ok_enabled,
+    }
+    return render(request, 'workflow/workflow_detail_qa.html', context)
+
+
+@login_required
+def qa_update_avance_ajax(request, id_workflow, id_prueba):
+    """
+    AJAX view to update avance (progress) of a test.
+    Automatically updates resultado based on avance value.
+    """
+    if request.user.role != 'QA':
+        return JsonResponse({'success': False, 'error': 'Acceso denegado'}, status=403)
+
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'error': 'Método no permitido'}, status=405)
+
+    try:
+        workflow = get_object_or_404(Workflow, id_workflow=id_workflow)
+        prueba = get_object_or_404(PlanPruebaQA, workflow=workflow, id_prueba=id_prueba)
+
+        # Get avance value from POST data
+        avance = request.POST.get('avance', '').strip()
+
+        if not avance:
+            return JsonResponse({'success': False, 'error': 'El valor de avance es requerido'})
+
+        try:
+            avance_int = int(avance)
+        except ValueError:
+            return JsonResponse({'success': False, 'error': 'El valor de avance debe ser un número entero'})
+
+        # Validate range
+        if avance_int < 0 or avance_int > 100:
+            return JsonResponse({'success': False, 'error': 'El valor de avance debe estar entre 0 y 100'})
+
+        # Update avance
+        prueba.avance = avance_int
+
+        # Automatic resultado update based on avance
+        if avance_int == 100:
+            prueba.resultado = 'Aprobado'
+        elif avance_int > 0:
+            prueba.resultado = 'En proceso'
+        else:
+            prueba.resultado = 'No iniciado'
+
+        prueba.save()
+
+        return JsonResponse({
+            'success': True,
+            'message': 'Avance actualizado exitosamente',
+            'avance': prueba.avance,
+            'resultado': prueba.resultado
+        })
+
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+def qa_toggle_rechazar_ajax(request, id_workflow, id_prueba):
+    """
+    AJAX view to toggle rechazar/reinyectar (reject/reinject) a test.
+
+    Rule 1: If resultado is 'No iniciado' or 'En proceso', change to 'No aprobado'
+    Rule 2: If resultado is 'No aprobado', change to 'No iniciado' and reset avance to 0
+    """
+    if request.user.role != 'QA':
+        return JsonResponse({'success': False, 'error': 'Acceso denegado'}, status=403)
+
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'error': 'Método no permitido'}, status=405)
+
+    try:
+        workflow = get_object_or_404(Workflow, id_workflow=id_workflow)
+        prueba = get_object_or_404(PlanPruebaQA, workflow=workflow, id_prueba=id_prueba)
+
+        # Optional comentario
+        comentario = request.POST.get('comentario', '').strip()
+
+        # Rule 1: 'No iniciado' or 'En proceso' -> 'No aprobado'
+        if prueba.resultado in ['No iniciado', 'En proceso']:
+            prueba.resultado = 'No aprobado'
+            action_message = 'Prueba marcada como "No aprobado"'
+
+        # Rule 2: 'No aprobado' -> 'No iniciado' and reset avance to 0
+        elif prueba.resultado == 'No aprobado':
+            prueba.resultado = 'No iniciado'
+            prueba.avance = 0
+            action_message = 'Prueba reinyectada (resultado "No iniciado", avance reiniciado a 0)'
+
+        else:
+            # Should not happen (Aprobado with avance=100 should have button disabled)
+            return JsonResponse({'success': False, 'error': 'No se puede rechazar una prueba aprobada al 100%'})
+
+        prueba.save()
+
+        return JsonResponse({
+            'success': True,
+            'message': action_message,
+            'avance': prueba.avance,
+            'resultado': prueba.resultado,
+            'comentario': comentario  # Echo back for logging if needed
+        })
+
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
