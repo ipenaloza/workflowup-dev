@@ -1,0 +1,340 @@
+{% extends "base_authenticated.html" %}
+
+{% block title %}Workflow {{ workflow.id_workflow }} - SCM - WorkflowUp{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Upper Section: Workflow Details Card -->
+    <div class="bg-white rounded-lg shadow-md p-8">
+        <div class="flex justify-between items-center mb-6">
+            <h2 class="text-3xl font-bold text-gray-800">Workflow {{ workflow.id_workflow }} - Revisión SCM</h2>
+            <a href="{% url 'workflow:dashboard' %}"
+               class="text-blue-600 hover:text-blue-900 font-medium">Volver al Dashboard</a>
+        </div>
+
+        <!-- Workflow Information Grid -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+            <div>
+                <h3 class="text-sm font-medium text-gray-500">ID Proyecto</h3>
+                <p class="mt-1 text-lg text-gray-900">{{ workflow.id_proyecto }}</p>
+            </div>
+            <div>
+                <h3 class="text-sm font-medium text-gray-500">Componente</h3>
+                <p class="mt-1 text-lg text-gray-900">{{ workflow.componente }}</p>
+            </div>
+            <div class="md:col-span-2">
+                <h3 class="text-sm font-medium text-gray-500">Nombre Proyecto</h3>
+                <p class="mt-1 text-lg text-gray-900">{{ workflow.nom_proyecto }}</p>
+            </div>
+            <div class="md:col-span-2">
+                <h3 class="text-sm font-medium text-gray-500">Descripción Proyecto</h3>
+                <p class="mt-1 text-gray-900">{{ workflow.desc_proyecto }}</p>
+            </div>
+            <div>
+                <h3 class="text-sm font-medium text-gray-500">Jefe de Proyecto</h3>
+                <p class="mt-1 text-gray-900">{{ workflow.jefe_proyecto }}</p>
+            </div>
+            <div>
+                <h3 class="text-sm font-medium text-gray-500">Fecha Creación</h3>
+                <p class="mt-1 text-gray-900">{{ workflow.creacion|date:"d/m/Y" }}</p>
+            </div>
+            <div>
+                <h3 class="text-sm font-medium text-gray-500">QA Estimado</h3>
+                <p class="mt-1 text-gray-900">{{ workflow.qa_estimado|date:"d/m/Y" }}</p>
+            </div>
+            <div>
+                <h3 class="text-sm font-medium text-gray-500">PAP Estimado</h3>
+                <p class="mt-1 text-gray-900">{{ workflow.pap_estimado|date:"d/m/Y" }}</p>
+            </div>
+            <div>
+                <h3 class="text-sm font-medium text-gray-500">Release</h3>
+                <p class="mt-1 text-gray-900">{{ workflow.release|default:"-" }}</p>
+            </div>
+            <div>
+                <h3 class="text-sm font-medium text-gray-500">Línea Base</h3>
+                {% if linea_base_editable %}
+                <form method="post" class="flex items-center space-x-2">
+                    {% csrf_token %}
+                    <input type="hidden" name="update_linea_base" value="1">
+                    {{ linea_base_form.linea_base }}
+                    <button type="submit"
+                            class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold py-1 px-3 rounded transition-colors duration-200">
+                        Actualizar
+                    </button>
+                </form>
+                {% else %}
+                <p class="mt-1 text-gray-900">{{ workflow.linea_base|default:"-" }}</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Current Process Status -->
+        <div class="border-t border-gray-200 pt-6 mt-6">
+            <h3 class="text-lg font-semibold text-gray-800 mb-4">Proceso Activo</h3>
+            <div class="bg-blue-50 border-l-4 border-blue-400 p-4 mb-6">
+                <div class="flex">
+                    <div class="flex-shrink-0">
+                        <svg class="h-5 w-5 text-blue-400" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+                        </svg>
+                    </div>
+                    <div class="ml-3">
+                        <p class="text-sm text-blue-700">
+                            <span class="font-medium">
+                                {% if proceso_activo == 'linea base' %}
+                                Revisión de Línea Base
+                                {% elif proceso_activo == 'Diff Info' %}
+                                Revisión de Informe de Diferencias
+                                {% endif %}
+                            </span>
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="border-t border-gray-200 pt-6 mt-6">
+            <div class="flex flex-wrap gap-3">
+                <button onclick="openApprovalModal()"
+                        {% if not btn_ok_enabled %}disabled{% endif %}
+                        class="{% if btn_ok_enabled %}bg-green-600 hover:bg-green-700{% else %}bg-gray-400 cursor-not-allowed{% endif %} text-white font-bold py-2 px-6 rounded transition-colors duration-200">
+                    Enviar Ok
+                </button>
+
+                <button onclick="openRejectionModal()"
+                        class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-6 rounded transition-colors duration-200">
+                    Enviar No Ok
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Lower Section: Activities List -->
+    <div class="bg-white rounded-lg shadow-md p-8">
+        <h3 class="text-2xl font-bold text-gray-800 mb-6">Historial de Actividades</h3>
+
+        {% if actividades %}
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">ID</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Fecha</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Usuario</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Estado Workflow</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Proceso</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Estado Proceso</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actividad</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Comentario</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    {% for actividad in actividades %}
+                    <tr class="hover:bg-gray-50">
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{{ actividad.id_actividad }}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ actividad.fecha|date:"d/m/Y H:i" }}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{{ actividad.usuario }}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{{ actividad.estado_workflow|default:"-" }}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{{ actividad.proceso|default:"-" }}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm">
+                            {% if actividad.estado_proceso %}
+                            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full
+                                {% if actividad.estado_proceso == 'Ok' %}bg-green-100 text-green-800
+                                {% elif actividad.estado_proceso == 'No Ok' %}bg-red-100 text-red-800
+                                {% elif actividad.estado_proceso == 'En Proceso' %}bg-yellow-100 text-yellow-800
+                                {% else %}bg-gray-100 text-gray-800{% endif %}">
+                                {{ actividad.estado_proceso }}
+                            </span>
+                            {% else %}
+                            <span class="text-gray-400">-</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-6 py-4 text-sm text-gray-900">{{ actividad.actividad }}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm">
+                            {% if actividad.comentario %}
+                            <button onclick="showComentario('{{ actividad.comentario|escapejs }}')"
+                                    class="text-blue-600 hover:text-blue-900">Ver</button>
+                            {% else %}
+                            <span class="text-gray-400">-</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-gray-500 text-center py-8">No hay actividades registradas.</p>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Modal for Approval (Enviar Ok) -->
+<div id="approvalModal" class="hidden fixed z-10 inset-0 overflow-y-auto">
+    <div class="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+        <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"></div>
+        <div class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+            <form method="post">
+                {% csrf_token %}
+                <input type="hidden" name="enviar_ok" value="1">
+
+                <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                    <div class="sm:flex sm:items-start">
+                        <div class="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-green-100 sm:mx-0 sm:h-10 sm:w-10">
+                            <svg class="h-6 w-6 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                            </svg>
+                        </div>
+                        <div class="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left flex-1">
+                            <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">
+                                Aprobar
+                                {% if proceso_activo == 'linea base' %}
+                                Línea Base
+                                {% elif proceso_activo == 'Diff Info' %}
+                                Informe de Diferencias
+                                {% endif %}
+                            </h3>
+                            <div class="mt-2">
+                                <label for="comentario_ok" class="block text-sm font-medium text-gray-700 mb-2">
+                                    Comentario (Opcional - máximo 200 caracteres)
+                                </label>
+                                <textarea name="comentario" id="comentario_ok" rows="3" maxlength="200"
+                                          class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500"
+                                          placeholder="Ingrese un comentario opcional..."></textarea>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                    <button type="submit"
+                            class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-green-600 text-base font-medium text-white hover:bg-green-700 focus:outline-none sm:ml-3 sm:w-auto sm:text-sm">
+                        Confirmar Aprobación
+                    </button>
+                    <button type="button" onclick="closeApprovalModal()"
+                            class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm">
+                        Cancelar
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Modal for Rejection (Enviar No Ok) -->
+<div id="rejectionModal" class="hidden fixed z-10 inset-0 overflow-y-auto">
+    <div class="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+        <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"></div>
+        <div class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+            <form method="post" id="rejectionForm">
+                {% csrf_token %}
+                <input type="hidden" name="enviar_no_ok" value="1">
+
+                <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                    <div class="sm:flex sm:items-start">
+                        <div class="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-red-100 sm:mx-0 sm:h-10 sm:w-10">
+                            <svg class="h-6 w-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                        </div>
+                        <div class="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left flex-1">
+                            <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">
+                                Rechazar
+                                {% if proceso_activo == 'linea base' %}
+                                Línea Base
+                                {% elif proceso_activo == 'Diff Info' %}
+                                Informe de Diferencias
+                                {% endif %}
+                            </h3>
+                            <div class="mt-2">
+                                <label for="comentario_no_ok" class="block text-sm font-medium text-gray-700 mb-2">
+                                    Comentario <span class="text-red-600">*</span> (Obligatorio - máximo 200 caracteres)
+                                </label>
+                                <textarea name="comentario" id="comentario_no_ok" rows="3" maxlength="200" required
+                                          class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-red-500 focus:ring-red-500"
+                                          placeholder="Por favor, ingrese el motivo del rechazo..."></textarea>
+                                <p id="comentario_error" class="mt-2 text-sm text-red-600 hidden">El comentario es obligatorio para rechazar.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                    <button type="submit"
+                            class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-red-600 text-base font-medium text-white hover:bg-red-700 focus:outline-none sm:ml-3 sm:w-auto sm:text-sm">
+                        Confirmar Rechazo
+                    </button>
+                    <button type="button" onclick="closeRejectionModal()"
+                            class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm">
+                        Cancelar
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Modal for Comentario Display -->
+<div id="comentarioModal" class="hidden fixed z-10 inset-0 overflow-y-auto">
+    <div class="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+        <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" onclick="closeComentarioModal()"></div>
+        <div class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+            <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">Comentario</h3>
+                <div class="mt-2">
+                    <p id="comentario_text" class="text-sm text-gray-700"></p>
+                </div>
+            </div>
+            <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                <button type="button" onclick="closeComentarioModal()"
+                        class="w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none sm:w-auto sm:text-sm">
+                    Cerrar
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function openApprovalModal() {
+    document.getElementById('comentario_ok').value = '';
+    document.getElementById('approvalModal').classList.remove('hidden');
+}
+
+function closeApprovalModal() {
+    document.getElementById('approvalModal').classList.add('hidden');
+}
+
+function openRejectionModal() {
+    document.getElementById('comentario_no_ok').value = '';
+    document.getElementById('comentario_error').classList.add('hidden');
+    document.getElementById('rejectionModal').classList.remove('hidden');
+}
+
+function closeRejectionModal() {
+    document.getElementById('rejectionModal').classList.add('hidden');
+}
+
+// Validación del formulario de rechazo
+document.getElementById('rejectionForm').addEventListener('submit', function(e) {
+    const comentario = document.getElementById('comentario_no_ok').value.trim();
+
+    if (!comentario) {
+        e.preventDefault();
+        document.getElementById('comentario_error').classList.remove('hidden');
+        document.getElementById('comentario_no_ok').focus();
+        return false;
+    }
+
+    return true;
+});
+
+function showComentario(comentario) {
+    document.getElementById('comentario_text').textContent = comentario;
+    document.getElementById('comentarioModal').classList.remove('hidden');
+}
+
+function closeComentarioModal() {
+    document.getElementById('comentarioModal').classList.add('hidden');
+}
+</script>
+{% endblock %}

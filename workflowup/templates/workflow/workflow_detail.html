@@ -34,13 +34,35 @@
                 <h3 class="text-sm font-medium text-gray-500">Fecha Creación</h3>
                 <p class="mt-1 text-gray-900">{{ workflow.creacion|date:"d/m/Y" }}</p>
             </div>
-            <div>
-                <h3 class="text-sm font-medium text-gray-500">QA Estimado</h3>
-                <p class="mt-1 text-gray-900">{{ workflow.qa_estimado|date:"d/m/Y" }}</p>
-            </div>
-            <div>
-                <h3 class="text-sm font-medium text-gray-500">PAP Estimado</h3>
-                <p class="mt-1 text-gray-900">{{ workflow.pap_estimado|date:"d/m/Y" }}</p>
+            <div class="md:col-span-2">
+                <h3 class="text-sm font-medium text-gray-500 mb-2">Fechas Estimadas</h3>
+                <form method="post" class="space-y-3">
+                    {% csrf_token %}
+                    <input type="hidden" name="update_fechas" value="1">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 mb-1">{{ fechas_form.qa_estimado.label }}</label>
+                            {{ fechas_form.qa_estimado }}
+                            {% if fechas_form.qa_estimado.errors %}
+                                <p class="mt-1 text-xs text-red-600">{{ fechas_form.qa_estimado.errors.0 }}</p>
+                            {% endif %}
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 mb-1">{{ fechas_form.pap_estimado.label }}</label>
+                            {{ fechas_form.pap_estimado }}
+                            {% if fechas_form.pap_estimado.errors %}
+                                <p class="mt-1 text-xs text-red-600">{{ fechas_form.pap_estimado.errors.0 }}</p>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% if fechas_form.non_field_errors %}
+                        <p class="text-xs text-red-600">{{ fechas_form.non_field_errors.0 }}</p>
+                    {% endif %}
+                    <button type="submit"
+                            class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold py-2 px-4 rounded transition-colors duration-200">
+                        Actualizar Fechas
+                    </button>
+                </form>
             </div>
             <div>
                 <h3 class="text-sm font-medium text-gray-500">Release</h3>
@@ -53,6 +75,10 @@
                         Actualizar
                     </button>
                 </form>
+            </div>
+            <div>
+                <h3 class="text-sm font-medium text-gray-500">Línea Base</h3>
+                <p class="mt-1 text-lg text-gray-900">{{ workflow.linea_base|default:"-" }}</p>
             </div>
         </div>
 

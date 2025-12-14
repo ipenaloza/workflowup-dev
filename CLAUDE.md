@@ -121,19 +121,24 @@ python workflowup/manage.py check
    - Dynamically generates `nav_links` in template context based on user role
    - Registered in `settings.py` TEMPLATES context_processors as `users_admin.context_processors.navigation_context`
    - **Administrador:** User Admin + Workflow + Password Change + Logout
+   - **Jefe de Proyecto:** Workflow + Create Workflow + Password Change + Logout
    - **Other Roles:** Workflow + Password Change + Logout
    - Links include `url`, `text`, and `name` keys for template rendering
 
 ### URL Structure
 
 ```
-/                    → Login page (root)
-/logout/             → Logout
-/password-change/    → Password change (all authenticated)
-/password-reset/     → Password reset flow (4 views)
-/usuarios/           → User administration (admin only)
-/workflow/           → Workflow dashboard (all authenticated)
-/admin/              → Django admin site
+/                              → Login page (root)
+/logout/                       → Logout
+/password-change/              → Password change (all authenticated)
+/password-reset/               → Password reset flow (4 views)
+/usuarios/                     → User administration (admin only)
+/workflow/                     → Workflow dashboard (role-specific views)
+/workflow/create/              → Create workflow (Jefe de Proyecto only)
+/workflow/<id>/                → Workflow detail (Jefe de Proyecto)
+/workflow/<id>/plan-pruebas/   → QA test plan (Jefe de Proyecto)
+/workflow/<id>/scm/            → SCM workflow detail (SCM role only)
+/admin/                        → Django admin site
 ```
 
 ### Apps
@@ -146,9 +151,54 @@ python workflowup/manage.py check
 - Soft delete protection
 
 **workflow** - Workflow System
-- Dashboard accessible to all authenticated users
-- Displays user info and role
-- Placeholder for future workflow features
+- **Role-specific dashboards:** Different views for Jefe de Proyecto, SCM, and other roles
+- **Workflow CRUD:** Create and manage software release workflows (Jefe de Proyecto only)
+- **Activity Tracking:** Comprehensive audit log via `Actividad` model with workflow states and process transitions
+- **Process Flow:** Sequential approval workflow (línea base → RM Rev → Diff Info → QA)
+- **QA Test Plans:** Test management with results tracking (`PlanPruebaQA` model)
+- **SCM Integration:** Dedicated SCM view for baseline approval and diff reports
+
+### Workflow System Architecture
+
+The workflow app implements a **sequential approval process** for software release management:
+
+**Data Models:**
+1. **Workflow** - Main workflow entity with project info, dates, release info, and baseline tracking
+2. **Actividad** - Immutable activity log tracking all state changes and process transitions
+3. **PlanPruebaQA** - QA test plan with progress and results
+
+**Workflow States** (`estado_workflow` field in Actividad):
+- **Nuevo** - Initial state after creation
+- **Activo** - Active workflow with ongoing processes
+- **Cancelado** - Cancelled by Jefe de Proyecto
+- **Cerrado** - Completed workflow (all processes approved)
+
+**Process Flow** (sequential approval chain via `proceso` field):
+1. **linea base** - SCM creates baseline (SCM role)
+2. **RM Rev** - Release Manager review
+3. **Diff Info** - SCM generates diff report (SCM role)
+4. **QA** - Quality Assurance testing (QA role)
+
+**Process States** (`estado_proceso` field):
+- **En Proceso** - Awaiting approval from assigned role
+- **Ok** - Approved, can proceed to next process
+- **No Ok** - Rejected, Jefe de Proyecto must re-request
+
+**Key Model Methods** (`workflowup/workflow/models.py:53-71`):
+- `get_actividad_workflow()` - Latest overall activity (determines workflow state)
+- `get_actividad_scm1()`, `get_actividad_rm()`, `get_actividad_scm2()`, `get_actividad_qa()` - Latest activity for each process
+- These methods drive button enabling/disabling logic in views
+
+**Role-Based Views:**
+- **Jefe de Proyecto**: Create workflows, request processes, manage test plans (`dashboard_jp.html`, `workflow_detail.html`)
+- **SCM**: Approve/reject línea base and Diff Info requests (`dashboard_scm.html`, `workflow_detail_scm.html`)
+- **Other roles**: Generic dashboard (`dashboard.html`)
+
+**Business Rules:**
+- Processes must be requested sequentially (línea base → RM Rev → Diff Info → QA)
+- SCM must populate `linea_base` field before approving línea base process
+- Comments are **mandatory** when rejecting (estado_proceso='No Ok')
+- Activities are immutable - create new activity for state changes, never update existing
 
 ### Key Settings
 
@@ -177,6 +227,39 @@ if request.user.role == 'Administrador':
     pass
 ```
 
+### Working with Workflows
+
+```python
+# Creating a new activity (always increment id_actividad)
+from django.db.models import Max
+
+max_id = workflow.actividades.aggregate(Max('id_actividad'))['id_actividad__max']
+next_id = (max_id or 0) + 1
+
+Actividad.objects.create(
+    workflow=workflow,
+    id_actividad=next_id,
+    usuario=request.user.username,
+    estado_workflow='Activo',
+    proceso='linea base',
+    estado_proceso='En Proceso',
+    actividad='Linea base solicitada',
+    comentario=comentario_opcional
+)
+
+# Checking workflow state before actions
+actividad_scm1 = workflow.get_actividad_scm1()
+if actividad_scm1 and actividad_scm1.estado_proceso == 'Ok':
+    # SCM has approved, can proceed to next step
+    pass
+
+# Button enabling logic (see workflow/views.py:286-306)
+btn_enabled = (
+    (prev_process_activity and prev_process_activity.estado_proceso == 'Ok') or
+    (current_process_activity and current_process_activity.estado_proceso == 'No Ok')
+)
+```
+
 ### Adding New Roles
 
 1. Update `User.ROLE_CHOICES` in `users_admin/models.py`
@@ -184,6 +267,15 @@ if request.user.role == 'Administrador':
 3. Apply migration: `python workflowup/manage.py migrate`
 4. Update `context_processors.py` for role-based navigation if needed
 5. Create custom decorators like `@admin_required` for new role-specific access control
+
+### Adding New Workflow Processes
+
+1. Add process to `Actividad.PROCESO_CHOICES` in `workflow/models.py`
+2. Create `get_actividad_<process>()` helper method in `Workflow` model
+3. Add button logic in Jefe de Proyecto view (`workflow_detail`)
+4. Create role-specific view for approval (like `workflow_detail_scm`)
+5. Update dashboard filters to include new process
+6. Create migration and apply
 
 ### Database Workflow (Development)
 
@@ -197,6 +289,8 @@ if request.user.role == 'Administrador':
 
 Default test accounts (created by `setup_users.py`):
 - **admin/admin123** - Administrador role
+- **jefe_proyecto/test123** - Jefe de Proyecto role
+- **scm_user/test123** - SCM role
 - **qa_tester/test123** - QA role
 - See `QUICK_START.md` for full list
 
@@ -209,6 +303,10 @@ Default test accounts (created by `setup_users.py`):
 - **MySQL Required:** Ensure MySQL server running on 127.0.0.1:3306 before starting application
 - **Settings Module:** `workflowup.settings`
 - **Root URLconf:** `workflowup.urls`
+- **Activity Immutability:** Activities are immutable audit logs - never update/delete, always create new activities
+- **Sequential Process Flow:** Workflows enforce sequential approval (línea base → RM Rev → Diff Info → QA)
+- **Mandatory Comments:** Rejections (estado_proceso='No Ok') require comments; approvals are optional
+- **SCM Baseline Requirement:** SCM must populate `workflow.linea_base` field before approving línea base process
 
 ## Security Features
 

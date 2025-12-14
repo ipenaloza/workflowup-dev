@@ -10,7 +10,7 @@ from django.db.models import Max, Q
 from django.http import JsonResponse
 from django.utils import timezone
 from .models import Workflow, PlanPruebaQA, Actividad
-from .forms import WorkflowCreateForm, PlanPruebaCreateForm, ReleaseUpdateForm
+from .forms import WorkflowCreateForm, PlanPruebaCreateForm, ReleaseUpdateForm, LineaBaseUpdateForm, FechasUpdateForm
 
 
 @login_required
@@ -96,6 +96,46 @@ def dashboard(request):
         }
         return render(request, 'workflow/dashboard_jp.html', context)
 
+    elif request.user.role == 'SCM':
+        # Get all workflows with SCM activities in process
+        # "lista de actividades scm": QuerySet where latest activity has:
+        # (proceso='linea base' AND estado_proceso='En Proceso') OR
+        # (proceso='Diff Info' AND estado_proceso='En Proceso')
+        all_workflows = Workflow.objects.all().prefetch_related('actividades')
+
+        scm_workflows = []
+        for workflow in all_workflows:
+            # Get the latest activity
+            ultima_actividad = workflow.get_actividad_workflow()
+
+            # Check if workflow should be included in SCM list
+            if ultima_actividad:
+                # Include if estado_workflow is 'Activo' (exclude Cancelado/Cerrado)
+                if ultima_actividad.estado_workflow == 'Activo':
+                    # Check if SCM needs to act on this workflow
+                    actividad_scm1 = workflow.get_actividad_scm1()
+                    actividad_scm2 = workflow.get_actividad_scm2()
+
+                    # Include if linea base is in process
+                    if actividad_scm1 and actividad_scm1.estado_proceso == 'En Proceso':
+                        scm_workflows.append({
+                            'workflow': workflow,
+                            'proceso': 'linea base',
+                            'estado_workflow': ultima_actividad.estado_workflow,
+                        })
+                    # Or if Diff Info is in process
+                    elif actividad_scm2 and actividad_scm2.estado_proceso == 'En Proceso':
+                        scm_workflows.append({
+                            'workflow': workflow,
+                            'proceso': 'Diff Info',
+                            'estado_workflow': ultima_actividad.estado_workflow,
+                        })
+
+        context = {
+            'scm_workflows': scm_workflows,
+        }
+        return render(request, 'workflow/dashboard_scm.html', context)
+
     # Default dashboard for other roles
     context = {
         'user': request.user,
@@ -160,6 +200,14 @@ def workflow_detail(request, id_workflow):
         if release_form.is_valid():
             release_form.save()
             messages.success(request, 'Release actualizado exitosamente.')
+            return redirect('workflow:workflow_detail', id_workflow=id_workflow)
+
+    # Handle dates update
+    if request.method == 'POST' and 'update_fechas' in request.POST:
+        fechas_form = FechasUpdateForm(request.POST, instance=workflow)
+        if fechas_form.is_valid():
+            fechas_form.save()
+            messages.success(request, 'Fechas actualizadas exitosamente.')
             return redirect('workflow:workflow_detail', id_workflow=id_workflow)
 
     # Handle workflow cancellation
@@ -243,18 +291,9 @@ def workflow_detail(request, id_workflow):
 
     # Determine button states
     # Button 1: Solicitar línea base
-    # DEBE estar deshabilitado cuando:
-    # - El campo release está vacío/null
-    # - Ya existe una línea base aprobada (estado_proceso='Ok')
-    btn1_enabled = (
-        workflow.release and  # release debe estar lleno
-        workflow.release.strip() and  # y no ser solo espacios en blanco
-        not (actividad_scm1 and actividad_scm1.estado_proceso == 'Ok') and  # no tener línea base aprobada
-        (
-            (not actividad_scm1) or  # primera solicitud
-            (actividad_scm1 and actividad_scm1.estado_proceso == 'No Ok')  # o fue rechazada
-        )
-    )
+    # DEBE estar deshabilitado SOLO cuando:
+    # - Ya existe una línea base aprobada (proceso='linea base' y estado_proceso='Ok')
+    btn1_enabled = not (actividad_scm1 and actividad_scm1.estado_proceso == 'Ok')
 
     # Button 2: Solicitar revisión RM
     btn2_enabled = (
@@ -287,6 +326,7 @@ def workflow_detail(request, id_workflow):
         'btn3_enabled': btn3_enabled,
         'btn4_enabled': btn4_enabled,
         'release_form': ReleaseUpdateForm(instance=workflow),
+        'fechas_form': FechasUpdateForm(instance=workflow),
     }
     return render(request, 'workflow/workflow_detail.html', context)
 
@@ -331,3 +371,143 @@ def plan_pruebas(request, id_workflow):
         'form': form,
     }
     return render(request, 'workflow/plan_pruebas.html', context)
+
+
+@login_required
+def workflow_detail_scm(request, id_workflow):
+    """
+    View workflow details for SCM role.
+    Handles linea_base updates and SCM approval/rejection actions.
+    """
+    workflow = get_object_or_404(Workflow, id_workflow=id_workflow)
+
+    # Verify user has SCM role
+    if request.user.role != 'SCM':
+        raise PermissionDenied("Solo usuarios con rol SCM pueden acceder a esta vista.")
+
+    # Get process activities
+    actividad_workflow = workflow.get_actividad_workflow()
+    actividad_scm1 = workflow.get_actividad_scm1()
+    actividad_scm2 = workflow.get_actividad_scm2()
+
+    # Verify this workflow is in a state where SCM can act
+    if not actividad_workflow or actividad_workflow.estado_workflow != 'Activo':
+        raise PermissionDenied("Este workflow no está activo.")
+
+    # Check which process is active
+    proceso_activo = None
+    if actividad_scm1 and actividad_scm1.estado_proceso == 'En Proceso':
+        proceso_activo = 'linea base'
+    elif actividad_scm2 and actividad_scm2.estado_proceso == 'En Proceso':
+        proceso_activo = 'Diff Info'
+    else:
+        raise PermissionDenied("No hay actividades SCM pendientes para este workflow.")
+
+    # Handle linea_base update
+    if request.method == 'POST' and 'update_linea_base' in request.POST:
+        if proceso_activo != 'linea base':
+            messages.error(request, 'Solo se puede actualizar la línea base durante el proceso de línea base.')
+            return redirect('workflow:workflow_detail_scm', id_workflow=id_workflow)
+
+        linea_base_form = LineaBaseUpdateForm(request.POST, instance=workflow)
+        if linea_base_form.is_valid():
+            linea_base_form.save()
+            messages.success(request, 'Línea base actualizada exitosamente.')
+            return redirect('workflow:workflow_detail_scm', id_workflow=id_workflow)
+
+    # Handle "Enviar Ok" button
+    if request.method == 'POST' and 'enviar_ok' in request.POST:
+        # Validación: Si el proceso es "linea base", verificar que el campo linea_base no esté vacío
+        if proceso_activo == 'linea base':
+            if not workflow.linea_base or not workflow.linea_base.strip():
+                messages.error(request, 'No se puede aprobar la línea base si el campo está vacío. Por favor, ingrese la línea base primero.')
+                return redirect('workflow:workflow_detail_scm', id_workflow=id_workflow)
+
+        comentario = request.POST.get('comentario', '')
+
+        # Get the next id_actividad
+        max_id = workflow.actividades.aggregate(Max('id_actividad'))['id_actividad__max']
+        next_id = (max_id or 0) + 1
+
+        # Determine activity text based on proceso_activo
+        if proceso_activo == 'linea base':
+            actividad_text = 'Linea base aprobada'
+        else:  # Diff Info
+            actividad_text = 'Informe diferencias aprobado'
+
+        # Create the approval activity
+        Actividad.objects.create(
+            workflow=workflow,
+            id_actividad=next_id,
+            usuario=request.user.username,
+            estado_workflow='Activo',
+            proceso=proceso_activo,
+            estado_proceso='Ok',
+            actividad=actividad_text,
+            comentario=comentario if comentario else None
+        )
+
+        messages.success(request, f'{actividad_text} exitosamente.')
+        return redirect('workflow:dashboard')
+
+    # Handle "Enviar No Ok" button
+    if request.method == 'POST' and 'enviar_no_ok' in request.POST:
+        comentario = request.POST.get('comentario', '').strip()
+
+        # Validación: El comentario es OBLIGATORIO para rechazar
+        if not comentario:
+            messages.error(request, 'El comentario es obligatorio para rechazar. Por favor, ingrese el motivo del rechazo.')
+            return redirect('workflow:workflow_detail_scm', id_workflow=id_workflow)
+
+        # Get the next id_actividad
+        max_id = workflow.actividades.aggregate(Max('id_actividad'))['id_actividad__max']
+        next_id = (max_id or 0) + 1
+
+        # Determine activity text based on proceso_activo
+        if proceso_activo == 'linea base':
+            actividad_text = 'Linea base rechazada'
+        else:  # Diff Info
+            actividad_text = 'Informe diferencias rechazado'
+
+        # Create the rejection activity
+        Actividad.objects.create(
+            workflow=workflow,
+            id_actividad=next_id,
+            usuario=request.user.username,
+            estado_workflow='Activo',
+            proceso=proceso_activo,
+            estado_proceso='No Ok',
+            actividad=actividad_text,
+            comentario=comentario
+        )
+
+        messages.success(request, f'{actividad_text} exitosamente.')
+        return redirect('workflow:dashboard')
+
+    # Get all activities for display
+    actividades = workflow.actividades.all()
+
+    # Determine if linea_base can be edited
+    # Only if proceso_activo is 'linea base'
+    linea_base_editable = (proceso_activo == 'linea base')
+
+    # Determine if "Enviar Ok" button should be enabled
+    # For "linea base" process: only enable if linea_base field has content
+    # For "Diff Info" process: always enable
+    if proceso_activo == 'linea base':
+        btn_ok_enabled = bool(workflow.linea_base and workflow.linea_base.strip())
+    else:  # Diff Info
+        btn_ok_enabled = True
+
+    context = {
+        'workflow': workflow,
+        'actividades': actividades,
+        'actividad_workflow': actividad_workflow,
+        'actividad_scm1': actividad_scm1,
+        'actividad_scm2': actividad_scm2,
+        'proceso_activo': proceso_activo,
+        'linea_base_editable': linea_base_editable,
+        'linea_base_form': LineaBaseUpdateForm(instance=workflow),
+        'btn_ok_enabled': btn_ok_enabled,
+    }
+    return render(request, 'workflow/workflow_detail_scm.html', context)

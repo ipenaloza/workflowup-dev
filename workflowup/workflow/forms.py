@@ -111,3 +111,63 @@ class ReleaseUpdateForm(forms.ModelForm):
         labels = {
             'release': 'Release',
         }
+
+
+class LineaBaseUpdateForm(forms.ModelForm):
+    """
+    Form for updating the linea_base field of a workflow (SCM role).
+    """
+
+    class Meta:
+        model = Workflow
+        fields = ['linea_base']
+        widgets = {
+            'linea_base': forms.TextInput(attrs={
+                'class': 'mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500',
+                'placeholder': 'Ej: baseline-v1.0.0',
+                'maxlength': 80
+            }),
+        }
+        labels = {
+            'linea_base': 'Línea Base',
+        }
+
+
+class FechasUpdateForm(forms.ModelForm):
+    """
+    Form for updating QA and PAP estimated dates (Jefe de Proyecto only).
+    """
+
+    class Meta:
+        model = Workflow
+        fields = ['qa_estimado', 'pap_estimado']
+        widgets = {
+            'qa_estimado': forms.DateInput(attrs={
+                'class': 'mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500',
+                'type': 'date'
+            }),
+            'pap_estimado': forms.DateInput(attrs={
+                'class': 'mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500',
+                'type': 'date'
+            }),
+        }
+        labels = {
+            'qa_estimado': 'Fecha QA Estimado',
+            'pap_estimado': 'Fecha PAP Estimado',
+        }
+
+    def clean(self):
+        """
+        Validate that pap_estimado > qa_estimado
+        """
+        cleaned_data = super().clean()
+        qa_estimado = cleaned_data.get('qa_estimado')
+        pap_estimado = cleaned_data.get('pap_estimado')
+
+        if qa_estimado and pap_estimado:
+            if pap_estimado <= qa_estimado:
+                raise ValidationError({
+                    'pap_estimado': 'La fecha PAP Estimado debe ser posterior a la fecha QA Estimado.'
+                })
+
+        return cleaned_data
