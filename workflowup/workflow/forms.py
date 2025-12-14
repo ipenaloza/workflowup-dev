@@ -171,3 +171,24 @@ class FechasUpdateForm(forms.ModelForm):
                 })
 
         return cleaned_data
+
+
+class CodigoRMUpdateForm(forms.ModelForm):
+    """
+    Form for updating the codigo_rm field of a workflow (Release Manager role).
+    Allows any characters including symbols.
+    """
+
+    class Meta:
+        model = Workflow
+        fields = ['codigo_rm']
+        widgets = {
+            'codigo_rm': forms.TextInput(attrs={
+                'class': 'mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500',
+                'placeholder': 'Ej: RM-2024-01',
+                'maxlength': '9'
+            }),
+        }
+        labels = {
+            'codigo_rm': 'Código RM',
+        }

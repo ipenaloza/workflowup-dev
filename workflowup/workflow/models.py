@@ -1,5 +1,6 @@
 from django.db import models
 from django.core.exceptions import ValidationError
+from django.core.validators import RegexValidator
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
@@ -18,6 +19,12 @@ class Workflow(models.Model):
     desc_proyecto = models.TextField(verbose_name='Descripción Proyecto')
     componente = models.CharField(max_length=30, verbose_name='Componente')
     linea_base = models.CharField(max_length=80, blank=True, null=True, verbose_name='Línea Base')
+    codigo_rm = models.CharField(
+        max_length=9,
+        blank=True,
+        null=True,
+        verbose_name='Código RM'
+    )
     release = models.CharField(max_length=80, blank=True, null=True, verbose_name='Release')
     creacion = models.DateField(auto_now_add=True, verbose_name='Fecha Creación')
     qa_estimado = models.DateField(verbose_name='QA Estimado')

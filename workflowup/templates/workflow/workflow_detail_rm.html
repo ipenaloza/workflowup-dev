@@ -1,13 +1,13 @@
 {% extends "base_authenticated.html" %}
 
-{% block title %}Workflow {{ workflow.id_workflow }} - SCM - WorkflowUp{% endblock %}
+{% block title %}Workflow {{ workflow.id_workflow }} - Release Manager - WorkflowUp{% endblock %}
 
 {% block content %}
 <div class="space-y-6">
     <!-- Upper Section: Workflow Details Card -->
     <div class="bg-white rounded-lg shadow-md p-8">
         <div class="flex justify-between items-center mb-6">
-            <h2 class="text-3xl font-bold text-gray-800">Workflow {{ workflow.id_workflow }} - Revisión SCM</h2>
+            <h2 class="text-3xl font-bold text-gray-800">Workflow {{ workflow.id_workflow }} - Revisión Release Manager</h2>
             <a href="{% url 'workflow:dashboard' %}"
                class="text-blue-600 hover:text-blue-900 font-medium">Volver al Dashboard</a>
         </div>
@@ -15,12 +15,12 @@
         <!-- Workflow Information Grid -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
             <div>
-                <h3 class="text-sm font-medium text-gray-500">ID Proyecto</h3>
-                <p class="mt-1 text-lg text-gray-900">{{ workflow.id_proyecto }}</p>
+                <h3 class="text-sm font-medium text-gray-500">ID Workflow</h3>
+                <p class="mt-1 text-lg text-gray-900">{{ workflow.id_workflow }}</p>
             </div>
             <div>
-                <h3 class="text-sm font-medium text-gray-500">Componente</h3>
-                <p class="mt-1 text-lg text-gray-900">{{ workflow.componente }}</p>
+                <h3 class="text-sm font-medium text-gray-500">ID Proyecto</h3>
+                <p class="mt-1 text-lg text-gray-900">{{ workflow.id_proyecto }}</p>
             </div>
             <div class="md:col-span-2">
                 <h3 class="text-sm font-medium text-gray-500">Nombre Proyecto</h3>
@@ -31,8 +31,39 @@
                 <p class="mt-1 text-gray-900">{{ workflow.desc_proyecto }}</p>
             </div>
             <div>
+                <h3 class="text-sm font-medium text-gray-500">Componente</h3>
+                <p class="mt-1 text-gray-900">{{ workflow.componente }}</p>
+            </div>
+            <div>
                 <h3 class="text-sm font-medium text-gray-500">Jefe de Proyecto</h3>
                 <p class="mt-1 text-gray-900">{{ workflow.jefe_proyecto }}</p>
+            </div>
+            <div>
+                <h3 class="text-sm font-medium text-gray-500">Línea Base</h3>
+                <p class="mt-1 text-gray-900">{{ workflow.linea_base|default:"-" }}</p>
+            </div>
+            <div>
+                <h3 class="text-sm font-medium text-gray-500 mb-1">Código RM</h3>
+                <form method="post" class="space-y-2">
+                    {% csrf_token %}
+                    <input type="hidden" name="update_codigo_rm" value="1">
+                    <div class="flex items-start space-x-2">
+                        <div class="flex-1">
+                            {{ codigo_rm_form.codigo_rm }}
+                            {% if codigo_rm_form.codigo_rm.errors %}
+                                <p class="mt-1 text-sm text-red-600">{{ codigo_rm_form.codigo_rm.errors.0 }}</p>
+                            {% endif %}
+                        </div>
+                        <button type="submit"
+                                class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold py-2 px-4 rounded transition-colors duration-200">
+                            Actualizar
+                        </button>
+                    </div>
+                </form>
+            </div>
+            <div>
+                <h3 class="text-sm font-medium text-gray-500">Release</h3>
+                <p class="mt-1 text-gray-900">{{ workflow.release|default:"-" }}</p>
             </div>
             <div>
                 <h3 class="text-sm font-medium text-gray-500">Fecha Creación</h3>
@@ -46,51 +77,21 @@
                 <h3 class="text-sm font-medium text-gray-500">PAP Estimado</h3>
                 <p class="mt-1 text-gray-900">{{ workflow.pap_estimado|date:"d/m/Y" }}</p>
             </div>
-            <div>
-                <h3 class="text-sm font-medium text-gray-500">Release</h3>
-                <p class="mt-1 text-gray-900">{{ workflow.release|default:"-" }}</p>
-            </div>
-            <div>
-                <h3 class="text-sm font-medium text-gray-500">Línea Base</h3>
-                {% if linea_base_editable %}
-                <form method="post" class="flex items-center space-x-2">
-                    {% csrf_token %}
-                    <input type="hidden" name="update_linea_base" value="1">
-                    {{ linea_base_form.linea_base }}
-                    <button type="submit"
-                            class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold py-1 px-3 rounded transition-colors duration-200">
-                        Actualizar
-                    </button>
-                </form>
-                {% else %}
-                <p class="mt-1 text-gray-900">{{ workflow.linea_base|default:"-" }}</p>
-                {% endif %}
-            </div>
-            <div>
-                <h3 class="text-sm font-medium text-gray-500">Código RM</h3>
-                <p class="mt-1 text-gray-900">{{ workflow.codigo_rm|default:"No asignado" }}</p>
-            </div>
         </div>
 
         <!-- Current Process Status -->
         <div class="border-t border-gray-200 pt-6 mt-6">
             <h3 class="text-lg font-semibold text-gray-800 mb-4">Proceso Activo</h3>
-            <div class="bg-blue-50 border-l-4 border-blue-400 p-4 mb-6">
+            <div class="bg-purple-50 border-l-4 border-purple-400 p-4 mb-6">
                 <div class="flex">
                     <div class="flex-shrink-0">
-                        <svg class="h-5 w-5 text-blue-400" viewBox="0 0 20 20" fill="currentColor">
+                        <svg class="h-5 w-5 text-purple-400" viewBox="0 0 20 20" fill="currentColor">
                             <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
                         </svg>
                     </div>
                     <div class="ml-3">
-                        <p class="text-sm text-blue-700">
-                            <span class="font-medium">
-                                {% if proceso_activo == 'linea base' %}
-                                Revisión de Línea Base
-                                {% elif proceso_activo == 'Diff Info' %}
-                                Revisión de Informe de Diferencias
-                                {% endif %}
-                            </span>
+                        <p class="text-sm text-purple-700">
+                            <span class="font-medium">Revisión RM en Proceso</span>
                         </p>
                     </div>
                 </div>
@@ -111,6 +112,11 @@
                     Enviar No Ok
                 </button>
             </div>
+            {% if not btn_ok_enabled %}
+            <p class="mt-2 text-sm text-gray-600">
+                <span class="text-yellow-600 font-medium">Nota:</span> Para aprobar la revisión, primero debe ingresar un código RM.
+            </p>
+            {% endif %}
         </div>
     </div>
 
@@ -192,14 +198,12 @@
                         </div>
                         <div class="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left flex-1">
                             <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">
-                                Aprobar
-                                {% if proceso_activo == 'linea base' %}
-                                Línea Base
-                                {% elif proceso_activo == 'Diff Info' %}
-                                Informe de Diferencias
-                                {% endif %}
+                                Aprobar Revisión RM
                             </h3>
                             <div class="mt-2">
+                                <p class="text-sm text-gray-700 mb-3">
+                                    ¿Confirma que desea enviar el código RM <strong>{{ workflow.codigo_rm }}</strong> y aprobar esta revisión?
+                                </p>
                                 <label for="comentario_ok" class="block text-sm font-medium text-gray-700 mb-2">
                                     Comentario (Opcional - máximo 200 caracteres)
                                 </label>
@@ -243,12 +247,7 @@
                         </div>
                         <div class="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left flex-1">
                             <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">
-                                Rechazar
-                                {% if proceso_activo == 'linea base' %}
-                                Línea Base
-                                {% elif proceso_activo == 'Diff Info' %}
-                                Informe de Diferencias
-                                {% endif %}
+                                Rechazar Revisión RM
                             </h3>
                             <div class="mt-2">
                                 <label for="comentario_no_ok" class="block text-sm font-medium text-gray-700 mb-2">

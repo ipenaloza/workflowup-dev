@@ -10,7 +10,7 @@ from django.db.models import Max, Q
 from django.http import JsonResponse
 from django.utils import timezone
 from .models import Workflow, PlanPruebaQA, Actividad
-from .forms import WorkflowCreateForm, PlanPruebaCreateForm, ReleaseUpdateForm, LineaBaseUpdateForm, FechasUpdateForm
+from .forms import WorkflowCreateForm, PlanPruebaCreateForm, ReleaseUpdateForm, LineaBaseUpdateForm, FechasUpdateForm, CodigoRMUpdateForm
 
 
 @login_required
@@ -135,6 +135,37 @@ def dashboard(request):
             'scm_workflows': scm_workflows,
         }
         return render(request, 'workflow/dashboard_scm.html', context)
+
+    elif request.user.role == 'Release Manager':
+        # Get all workflows with RM Rev activities in process
+        all_workflows = Workflow.objects.all().prefetch_related('actividades')
+
+        rm_workflows = []
+        for workflow in all_workflows:
+            # Verify general workflow state
+            ultima_actividad = workflow.get_actividad_workflow()
+            if ultima_actividad and ultima_actividad.estado_workflow == 'Activo':
+                # Check if RM Rev process is in progress
+                actividad_rm = workflow.get_actividad_rm()
+                if actividad_rm and actividad_rm.estado_proceso == 'En Proceso':
+                    rm_workflows.append(workflow)
+
+        # Prepare data for display
+        workflow_data = []
+        for workflow in rm_workflows:
+            ultima_actividad = workflow.get_actividad_workflow()
+            actividad_rm = workflow.get_actividad_rm()
+            workflow_data.append({
+                'workflow': workflow,
+                'estado_workflow': ultima_actividad.estado_workflow if ultima_actividad else 'N/A',
+                'proceso': actividad_rm.proceso if actividad_rm else 'N/A',
+                'actividad': actividad_rm.actividad if actividad_rm else 'N/A',
+            })
+
+        context = {
+            'workflow_data': workflow_data,
+        }
+        return render(request, 'workflow/dashboard_rm.html', context)
 
     # Default dashboard for other roles
     context = {
@@ -296,15 +327,33 @@ def workflow_detail(request, id_workflow):
     btn1_enabled = not (actividad_scm1 and actividad_scm1.estado_proceso == 'Ok')
 
     # Button 2: Solicitar revisión RM
+    # Debe estar deshabilitado cuando:
+    # - El campo release está vacío o null
+    # - Ya existe una revisión RM aprobada (estado_proceso='Ok')
+    # Debe estar habilitado cuando:
+    # - La línea base fue aprobada (scm1 Ok) Y release tiene contenido Y no hay aprobación RM previa
+    # - O cuando RM rechazó (No Ok) Y release tiene contenido
     btn2_enabled = (
-        (actividad_scm1 and actividad_scm1.estado_proceso == 'Ok') or
-        (actividad_rm and actividad_rm.estado_proceso == 'No Ok')
+        bool(workflow.release and workflow.release.strip()) and  # Release debe tener contenido
+        not (actividad_rm and actividad_rm.estado_proceso == 'Ok') and  # No debe estar ya aprobado
+        (
+            (actividad_scm1 and actividad_scm1.estado_proceso == 'Ok') or  # Línea base aprobada
+            (actividad_rm and actividad_rm.estado_proceso == 'No Ok')  # O fue rechazado (re-solicitud)
+        )
     )
 
     # Button 3: Solicitar Informe de diferencia
+    # Debe estar deshabilitado cuando:
+    # - Ya existe un informe de diferencia aprobado (estado_proceso='Ok')
+    # Debe estar habilitado cuando:
+    # - RM aprobó (Ok) Y no hay aprobación de Diff Info previa
+    # - O cuando SCM rechazó Diff Info (No Ok)
     btn3_enabled = (
-        (actividad_rm and actividad_rm.estado_proceso == 'Ok') or
-        (actividad_scm2 and actividad_scm2.estado_proceso == 'No Ok')
+        not (actividad_scm2 and actividad_scm2.estado_proceso == 'Ok') and  # No debe estar ya aprobado
+        (
+            (actividad_rm and actividad_rm.estado_proceso == 'Ok') or  # RM aprobó
+            (actividad_scm2 and actividad_scm2.estado_proceso == 'No Ok')  # O SCM rechazó (re-solicitud)
+        )
     )
 
     # Button 4: Solicitar Pruebas de QA
@@ -511,3 +560,119 @@ def workflow_detail_scm(request, id_workflow):
         'btn_ok_enabled': btn_ok_enabled,
     }
     return render(request, 'workflow/workflow_detail_scm.html', context)
+
+
+@login_required
+def workflow_detail_rm(request, id_workflow):
+    """
+    View workflow details for Release Manager role.
+    Handles codigo_rm updates and RM approval/rejection actions.
+    """
+    workflow = get_object_or_404(Workflow, id_workflow=id_workflow)
+
+    # Verify user has Release Manager role
+    if request.user.role != 'Release Manager':
+        raise PermissionDenied("Solo usuarios con rol Release Manager pueden acceder a esta vista.")
+
+    # Get process activities
+    actividad_workflow = workflow.get_actividad_workflow()
+    actividad_rm = workflow.get_actividad_rm()
+
+    # Verify this workflow is in a state where RM can act
+    if not actividad_workflow or actividad_workflow.estado_workflow != 'Activo':
+        raise PermissionDenied("Este workflow no está activo.")
+
+    # Verify RM Rev process is active
+    if not actividad_rm or actividad_rm.estado_proceso != 'En Proceso':
+        raise PermissionDenied("No hay revisión RM pendiente para este workflow.")
+
+    # Initialize form variable
+    codigo_rm_form = None
+
+    # Handle codigo_rm update
+    if request.method == 'POST' and 'update_codigo_rm' in request.POST:
+        codigo_rm_form = CodigoRMUpdateForm(request.POST, instance=workflow)
+        if codigo_rm_form.is_valid():
+            codigo_rm_form.save()
+            messages.success(request, 'Código RM actualizado exitosamente.')
+            return redirect('workflow:workflow_detail_rm', id_workflow=id_workflow)
+        else:
+            # Form has errors, will be passed to template with error messages
+            messages.error(request, 'Error al actualizar el código RM. Por favor, verifique los datos ingresados.')
+
+    # Handle "Enviar Ok" button
+    if request.method == 'POST' and 'enviar_ok' in request.POST:
+        # Validation: codigo_rm must not be empty
+        if not workflow.codigo_rm or not workflow.codigo_rm.strip():
+            messages.error(request, 'No se puede aprobar la revisión RM si el código RM está vacío. Por favor, ingrese el código RM primero.')
+            return redirect('workflow:workflow_detail_rm', id_workflow=id_workflow)
+
+        comentario = request.POST.get('comentario', '')
+
+        # Get the next id_actividad
+        max_id = workflow.actividades.aggregate(Max('id_actividad'))['id_actividad__max']
+        next_id = (max_id or 0) + 1
+
+        # Create the approval activity
+        Actividad.objects.create(
+            workflow=workflow,
+            id_actividad=next_id,
+            usuario=request.user.username,
+            estado_workflow='Activo',
+            proceso='RM Rev',
+            estado_proceso='Ok',
+            actividad='Codigo RM enviado',
+            comentario=comentario if comentario else None
+        )
+
+        messages.success(request, 'Código RM enviado exitosamente.')
+        return redirect('workflow:dashboard')
+
+    # Handle "Enviar No Ok" button
+    if request.method == 'POST' and 'enviar_no_ok' in request.POST:
+        comentario = request.POST.get('comentario', '').strip()
+
+        # Validation: Comment is MANDATORY for rejection
+        if not comentario:
+            messages.error(request, 'El comentario es obligatorio para rechazar. Por favor, ingrese el motivo del rechazo.')
+            return redirect('workflow:workflow_detail_rm', id_workflow=id_workflow)
+
+        # Get the next id_actividad
+        max_id = workflow.actividades.aggregate(Max('id_actividad'))['id_actividad__max']
+        next_id = (max_id or 0) + 1
+
+        # Create the rejection activity
+        Actividad.objects.create(
+            workflow=workflow,
+            id_actividad=next_id,
+            usuario=request.user.username,
+            estado_workflow='Activo',
+            proceso='RM Rev',
+            estado_proceso='No Ok',
+            actividad='Revision RM Rechazada',
+            comentario=comentario
+        )
+
+        messages.success(request, 'Revisión RM rechazada exitosamente.')
+        return redirect('workflow:dashboard')
+
+    # Get all activities for display
+    actividades = workflow.actividades.all()
+
+    # Determine if "Enviar Ok" button should be enabled
+    # Only enable if codigo_rm field has content
+    btn_ok_enabled = bool(workflow.codigo_rm and workflow.codigo_rm.strip())
+
+    # If form wasn't initialized (no POST for update_codigo_rm), create a fresh form
+    if codigo_rm_form is None:
+        codigo_rm_form = CodigoRMUpdateForm(instance=workflow)
+
+    context = {
+        'workflow': workflow,
+        'actividades': actividades,
+        'actividad_workflow': actividad_workflow,
+        'actividad_rm': actividad_rm,
+        'codigo_rm_form': codigo_rm_form,
+        'btn_ok_enabled': btn_ok_enabled,
+    }
+    return render(request, 'workflow/workflow_detail_rm.html', context)
