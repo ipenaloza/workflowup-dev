@@ -128,17 +128,21 @@ python workflowup/manage.py check
 ### URL Structure
 
 ```
-/                              → Login page (root)
-/logout/                       → Logout
-/password-change/              → Password change (all authenticated)
-/password-reset/               → Password reset flow (4 views)
-/usuarios/                     → User administration (admin only)
-/workflow/                     → Workflow dashboard (role-specific views)
-/workflow/create/              → Create workflow (Jefe de Proyecto only)
-/workflow/<id>/                → Workflow detail (Jefe de Proyecto)
-/workflow/<id>/plan-pruebas/   → QA test plan (Jefe de Proyecto)
-/workflow/<id>/scm/            → SCM workflow detail (SCM role only)
-/admin/                        → Django admin site
+/                                                    → Login page (root)
+/logout/                                             → Logout
+/password-change/                                    → Password change (all authenticated)
+/password-reset/                                     → Password reset flow (4 views)
+/usuarios/                                           → User administration (admin only)
+/workflow/                                           → Workflow dashboard (role-specific views)
+/workflow/create/                                    → Create workflow (Jefe de Proyecto only)
+/workflow/<id>/                                      → Workflow detail (Jefe de Proyecto)
+/workflow/<id>/plan-pruebas/                         → QA test plan (Jefe de Proyecto)
+/workflow/<id>/scm/                                  → SCM workflow detail (SCM role only)
+/workflow/<id>/rm/                                   → RM workflow detail (Release Manager only)
+/workflow/<id>/qa/                                   → QA workflow detail (QA role only)
+/workflow/<id>/qa/<id_prueba>/update-avance/         → AJAX: Update test progress
+/workflow/<id>/qa/<id_prueba>/toggle-rechazar/       → AJAX: Toggle test rejection
+/admin/                                              → Django admin site
 ```
 
 ### Apps
@@ -190,15 +194,20 @@ The workflow app implements a **sequential approval process** for software relea
 - These methods drive button enabling/disabling logic in views
 
 **Role-Based Views:**
-- **Jefe de Proyecto**: Create workflows, request processes, manage test plans (`dashboard_jp.html`, `workflow_detail.html`)
+- **Jefe de Proyecto**: Create workflows, request processes, manage test plans (`dashboard_jp.html`, `workflow_detail.html`, `plan_pruebas.html`)
 - **SCM**: Approve/reject línea base and Diff Info requests (`dashboard_scm.html`, `workflow_detail_scm.html`)
-- **Other roles**: Generic dashboard (`dashboard.html`)
+- **Release Manager**: Approve/reject RM Rev requests (`dashboard_rm.html`, `workflow_detail_rm.html`)
+- **QA**: Execute tests, approve/reject QA process (`dashboard_qa.html`, `workflow_detail_qa.html`)
+- **Administrador**: Generic dashboard (`dashboard.html`)
 
 **Business Rules:**
 - Processes must be requested sequentially (línea base → RM Rev → Diff Info → QA)
-- SCM must populate `linea_base` field before approving línea base process
-- Comments are **mandatory** when rejecting (estado_proceso='No Ok')
+- **SCM** must populate `workflow.linea_base` field before approving línea base process
+- **Release Manager** must populate `workflow.codigo_rm` field before approving RM Rev process
+- Jefe de Proyecto must populate `workflow.release` field before requesting RM Rev
+- Comments are **mandatory** when rejecting (estado_proceso='No Ok'), optional for approvals
 - Activities are immutable - create new activity for state changes, never update existing
+- Rejections allow re-requests (process state can cycle between 'En Proceso' and 'No Ok')
 
 ### Key Settings
 
@@ -253,10 +262,15 @@ if actividad_scm1 and actividad_scm1.estado_proceso == 'Ok':
     # SCM has approved, can proceed to next step
     pass
 
-# Button enabling logic (see workflow/views.py:286-306)
-btn_enabled = (
-    (prev_process_activity and prev_process_activity.estado_proceso == 'Ok') or
-    (current_process_activity and current_process_activity.estado_proceso == 'No Ok')
+# Button enabling logic (see workflow/views.py:376-423)
+# Complex conditional logic based on previous approvals and current state
+# Example for RM Rev button:
+btn2_enabled = (
+    workflow.release and  # Release field must be populated
+    (
+        (actividad_scm1 and actividad_scm1.estado_proceso == 'Ok') or  # SCM approved
+        (actividad_rm and actividad_rm.estado_proceso == 'No Ok')      # RM rejected (re-request)
+    ) and not (actividad_rm and actividad_rm.estado_proceso == 'Ok')  # Not already approved
 )
 ```
 
@@ -289,8 +303,9 @@ btn_enabled = (
 
 Default test accounts (created by `setup_users.py`):
 - **admin/admin123** - Administrador role
-- **jefe_proyecto/test123** - Jefe de Proyecto role
+- **jproyecto/test123** - Jefe de Proyecto role
 - **scm_user/test123** - SCM role
+- **release_mgr/test123** - Release Manager role
 - **qa_tester/test123** - QA role
 - See `QUICK_START.md` for full list
 
@@ -307,6 +322,8 @@ Default test accounts (created by `setup_users.py`):
 - **Sequential Process Flow:** Workflows enforce sequential approval (línea base → RM Rev → Diff Info → QA)
 - **Mandatory Comments:** Rejections (estado_proceso='No Ok') require comments; approvals are optional
 - **SCM Baseline Requirement:** SCM must populate `workflow.linea_base` field before approving línea base process
+- **RM Code Requirement:** Release Manager must populate `workflow.codigo_rm` field before approving RM Rev process
+- **Release Field Requirement:** Jefe de Proyecto must populate `workflow.release` field before requesting RM Rev
 
 ## Security Features
 
