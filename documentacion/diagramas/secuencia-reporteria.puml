@@ -1,0 +1,562 @@
+@startuml secuencia-carga-inicial
+' ============================================================================
+' Secuencia 1: Carga Inicial del Dashboard
+' Describe el flujo de carga inicial cuando el Administrador accede al dashboard
+' ============================================================================
+
+title Secuencia 1: Carga Inicial del Dashboard de Reportería
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+
+actor "Administrador" as admin
+participant "Navegador Web" as browser
+participant "Django Views\n(dashboard)" as views
+participant "Helper Functions" as helpers
+participant "ORM Django" as orm
+database "MySQL DB" as db
+
+' ============================================================================
+' FLUJO PRINCIPAL
+' ============================================================================
+
+admin -> browser: Accede a /workflow
+activate browser
+
+browser -> views: GET /workflow
+activate views
+
+' Autenticación y autorización
+views -> views: @login_required\nverifica sesión
+views -> views: verifica role == "Administrador"
+
+note right of views
+  Si no es admin, redirige
+  a su dashboard específico
+  (JP, SCM, RM, QA)
+end note
+
+' Obtener workflows con última actividad
+views -> helpers: _get_workflows_with_latest_activity()
+activate helpers
+
+helpers -> orm: Workflow.objects.all()\n.prefetch_related('actividades')
+activate orm
+
+orm -> db: SELECT workflows\nWITH latest activity subquery
+activate db
+db --> orm: Resultados workflows
+deactivate db
+
+orm --> helpers: QuerySet workflows
+deactivate orm
+
+helpers -> helpers: Para cada workflow:\nget_actividad_workflow()
+helpers --> views: Lista workflows_data
+deactivate helpers
+
+note right of helpers
+  Retorna lista de dicts con:
+  - workflow
+  - latest_activity
+  - estado_workflow
+  - proceso
+  - estado_proceso
+  - usuario, fecha, comentario
+end note
+
+' Aplicar filtros (en carga inicial, sin filtros)
+views -> helpers: _apply_admin_filters(request, workflows_data)
+activate helpers
+helpers -> helpers: Sin filtros GET,\nretorna todos los workflows
+helpers --> views: filtered_workflows
+deactivate helpers
+
+' Calcular estadísticas
+views -> helpers: _calculate_workflow_stats(filtered_workflows)
+activate helpers
+helpers -> helpers: Contar por estado_workflow:\nNuevo, Activo, Cerrado, Cancelado
+helpers --> views: stats dict\n{total, nuevo, activo, cerrado, cancelado}
+deactivate helpers
+
+' Calcular matriz proceso/estado
+views -> helpers: _calculate_process_state_matrix(filtered_workflows)
+activate helpers
+helpers -> helpers: Contar por proceso x estado:\nlinea base, RM Rev, Diff Info, QA\nx En Proceso, Ok, No Ok
+helpers --> views: matrix dict
+deactivate helpers
+
+' Preparar detalles de workflows
+views -> helpers: _prepare_workflow_details(filtered_workflows)
+activate helpers
+
+helpers -> orm: Actividad.objects.filter(\nworkflow_id__in=workflow_ids)\n.select_related('workflow')
+activate orm
+
+orm -> db: SELECT ALL actividades\nFROM workflows filtrados\nORDER BY fecha DESC
+activate db
+db --> orm: Actividades históricas completas
+deactivate db
+
+orm --> helpers: QuerySet actividades
+deactivate orm
+
+helpers -> helpers: Preparar lista de detalles\ncon TODAS las actividades
+helpers --> views: workflow_details list
+deactivate helpers
+
+note right of helpers
+  Retorna TODAS las actividades
+  de los workflows filtrados,
+  NO solo la última actividad
+end note
+
+' Renderizar template
+views -> views: Preparar context:\nstats, matrix_rows,\nworkflow_details, usuarios
+views -> views: render('workflow/dashboard.html', context)
+views --> browser: HTML con datos completos
+deactivate views
+
+' Renderizado en cliente
+browser -> browser: Renderizar dashboard:\n- 5 tarjetas estadísticas\n- Matriz 4x3\n- Tabla actividades
+browser --> admin: Muestra dashboard completo
+deactivate browser
+
+@enduml
+
+' ============================================================================
+' ============================================================================
+' ============================================================================
+
+@startuml secuencia-aplicar-filtros
+' ============================================================================
+' Secuencia 2: Aplicar Filtros (AJAX)
+' Describe el flujo cuando el Administrador aplica filtros dinámicamente
+' ============================================================================
+
+title Secuencia 2: Aplicar Filtros (AJAX)
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+
+actor "Administrador" as admin
+participant "Navegador Web" as browser
+participant "JavaScript\n(dashboard.js)" as js
+participant "Django API\n(dashboard_api)" as api
+participant "Helper Functions" as helpers
+participant "ORM Django" as orm
+database "MySQL DB" as db
+
+' ============================================================================
+' FLUJO PRINCIPAL
+' ============================================================================
+
+admin -> browser: Llena formulario de filtros\n(fecha, estado, usuario, etc.)
+activate browser
+
+admin -> browser: Click en "Aplicar Filtros"
+
+browser -> js: addEventListener('click')
+activate js
+
+' Preparar request
+js -> js: Capturar FormData del formulario
+js -> js: new URLSearchParams(formData)
+js -> js: Mostrar loading indicator
+
+note right of js
+  Parámetros disponibles:
+  - fecha_desde, fecha_hasta
+  - estado, usuario
+  - id_proyecto, nom_proyecto
+  - componente
+end note
+
+' Enviar request AJAX
+js -> api: fetch('/workflow/dashboard-api/?' + params)
+activate api
+
+api -> api: @login_required\nverifica sesión
+api -> api: verifica role == "Administrador"
+
+note right of api
+  Si no es admin,
+  retorna error 403
+end note
+
+' Obtener workflows con última actividad
+api -> helpers: _get_workflows_with_latest_activity()
+activate helpers
+helpers -> orm: Workflow.objects.all()\n.prefetch_related('actividades')
+activate orm
+orm -> db: SELECT workflows
+activate db
+db --> orm: Workflows con actividades
+deactivate db
+orm --> helpers: QuerySet
+deactivate orm
+helpers --> api: workflows_data
+deactivate helpers
+
+' Aplicar filtros
+api -> helpers: _apply_admin_filters(request, workflows_data)
+activate helpers
+
+helpers -> helpers: Extraer parámetros GET:\nfecha_desde, fecha_hasta,\nestado, usuario, etc.
+
+helpers -> helpers: Para cada workflow:\n- Filtrar por rango fechas\n- Filtrar por estado_workflow\n- Filtrar por usuario\n- Filtrar por id_proyecto (contains)\n- Filtrar por nom_proyecto (contains)\n- Filtrar por componente (contains)
+
+note right of helpers
+  Filtros case-insensitive
+  con búsqueda por substring
+  (contains)
+end note
+
+helpers --> api: filtered_workflows
+deactivate helpers
+
+' Calcular estadísticas
+api -> helpers: _calculate_workflow_stats(filtered_workflows)
+activate helpers
+helpers -> helpers: Contar por estado
+helpers --> api: stats dict
+deactivate helpers
+
+' Calcular matriz
+api -> helpers: _calculate_process_state_matrix(filtered_workflows)
+activate helpers
+helpers -> helpers: Contar por proceso x estado
+helpers --> api: matrix dict
+deactivate helpers
+
+' Preparar detalles
+api -> helpers: _prepare_workflow_details(filtered_workflows)
+activate helpers
+helpers -> orm: Actividad.objects.filter(\nworkflow_id__in=ids)
+activate orm
+orm -> db: SELECT ALL actividades
+activate db
+db --> orm: Actividades completas
+deactivate db
+orm --> helpers: QuerySet
+deactivate orm
+helpers --> api: workflow_details list
+deactivate helpers
+
+' Preparar respuesta JSON
+api -> api: Convertir datetime a strings\npara JSON serialization
+api -> api: JsonResponse({\n  success: True,\n  stats: stats,\n  matrix: matrix,\n  workflow_details: workflow_details\n})
+
+api --> js: JSON response
+deactivate api
+
+' Actualizar DOM
+js -> js: Recibir respuesta JSON
+
+js -> js: Actualizar tarjetas estadísticas:\nstat-total, stat-nuevo,\nstat-activo, stat-cerrado,\nstat-cancelado
+
+js -> js: Actualizar matriz proceso/estado:\nmatrix-[proceso]-[estado]
+
+js -> js: Actualizar tabla:\nworkflows-tbody.innerHTML = ''
+
+js -> js: Para cada detail:\n- Crear <tr>\n- Aplicar clases CSS según estados\n- Agregar a tbody
+
+js -> js: Actualizar contador:\ntotal-count
+
+js -> js: Ocultar loading indicator
+
+js --> browser: DOM actualizado
+deactivate js
+
+browser --> admin: Muestra datos filtrados\nsin recargar página
+deactivate browser
+
+@enduml
+
+' ============================================================================
+' ============================================================================
+' ============================================================================
+
+@startuml secuencia-exportar-csv
+' ============================================================================
+' Secuencia 3: Exportar a CSV
+' Describe el flujo de exportación de datos filtrados a CSV
+' ============================================================================
+
+title Secuencia 3: Exportar Datos a CSV
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+
+actor "Administrador" as admin
+participant "Navegador Web" as browser
+participant "JavaScript\n(dashboard.js)" as js
+participant "Django Export View\n(export_workflows_csv)" as export
+participant "Helper Functions" as helpers
+participant "ORM Django" as orm
+database "MySQL DB" as db
+participant "Módulo CSV\nPython" as csv_module
+
+' ============================================================================
+' FLUJO PRINCIPAL
+' ============================================================================
+
+admin -> browser: Click en "Exportar CSV"
+activate browser
+
+browser -> js: addEventListener('click')
+activate js
+
+' Preparar URL con filtros
+js -> js: e.preventDefault()
+js -> js: Capturar FormData del formulario
+js -> js: new URLSearchParams(formData)
+
+note right of js
+  Mantiene los mismos filtros
+  que el dashboard actual
+end note
+
+js -> js: Construir URL:\n/workflow/export-csv/?params
+
+js -> browser: window.location.href = URL
+deactivate js
+
+' Request GET
+browser -> export: GET /workflow/export-csv/?params
+activate export
+
+export -> export: @login_required\nverifica sesión
+export -> export: verifica role == "Administrador"
+
+note right of export
+  Si no es admin,
+  lanza PermissionDenied
+end note
+
+' Obtener workflows con última actividad
+export -> helpers: _get_workflows_with_latest_activity()
+activate helpers
+helpers -> orm: Workflow.objects.all()\n.prefetch_related('actividades')
+activate orm
+orm -> db: SELECT workflows
+activate db
+db --> orm: Workflows
+deactivate db
+orm --> helpers: QuerySet
+deactivate orm
+helpers --> export: workflows_data
+deactivate helpers
+
+' Aplicar filtros
+export -> helpers: _apply_admin_filters(request, workflows_data)
+activate helpers
+helpers -> helpers: Aplicar mismos filtros\nque en dashboard_api
+helpers --> export: filtered_workflows
+deactivate helpers
+
+' Obtener IDs de workflows filtrados
+export -> export: Extraer workflow_ids\nde filtered_workflows
+
+' Consultar TODAS las actividades
+export -> helpers: _prepare_workflow_details(filtered_workflows)
+activate helpers
+
+helpers -> orm: Actividad.objects.filter(\nworkflow_id__in=workflow_ids)\n.select_related('workflow')\n.order_by('-fecha', 'workflow_id', '-id_actividad')
+activate orm
+
+orm -> db: SELECT * FROM actividad\nWHERE workflow_id IN (...)\nORDER BY fecha DESC
+activate db
+db --> orm: TODAS las actividades\nhistóricas (no solo últimas)
+deactivate db
+
+orm --> helpers: QuerySet actividades completo
+deactivate orm
+
+helpers -> helpers: Para cada actividad:\nPreparar dict con campos
+helpers --> export: workflow_details list
+deactivate helpers
+
+note right of helpers
+  IMPORTANTE: Retorna TODAS
+  las actividades históricas,
+  no solo la última de cada workflow
+end note
+
+' Crear archivo CSV
+export -> export: timestamp = now()
+export -> export: filename = f'workflows_report_{timestamp}.csv'
+export -> export: response = HttpResponse(\ncontenttype='text/csv; charset=utf-8')
+export -> export: Content-Disposition = attachment
+
+export -> export: Escribir BOM UTF-8\npara compatibilidad Excel
+
+export -> csv_module: csv.writer(response)
+activate csv_module
+
+export -> csv_module: writer.writerow(header)
+note right of csv_module
+  Header: ID Workflow, Proyecto,
+  Componente, ID Proyecto,
+  Estado Workflow, Proceso,
+  Estado Proceso, Usuario,
+  Fecha, Comentario
+end note
+
+export -> export: Para cada detail\nen workflow_details:
+
+loop Para cada actividad histórica
+  export -> csv_module: writer.writerow([\n  detail['id_workflow'],\n  detail['nom_proyecto'],\n  detail['componente'],\n  detail['id_proyecto'],\n  detail['estado_workflow'],\n  detail['proceso'],\n  detail['estado_proceso'],\n  detail['usuario'],\n  detail['fecha'],\n  detail['comentario']\n])
+end
+
+csv_module --> export: CSV escrito en response
+deactivate csv_module
+
+export --> browser: HttpResponse con archivo CSV
+deactivate export
+
+' Descarga en cliente
+browser -> browser: Detectar Content-Disposition:\nattachment
+browser --> admin: Descarga archivo\nworkflows_report_YYYYMMDD_HHMMSS.csv
+deactivate browser
+
+admin -> admin: Guarda archivo localmente
+
+@enduml
+
+' ============================================================================
+' ============================================================================
+' ============================================================================
+
+@startuml secuencia-limpiar-filtros
+' ============================================================================
+' Secuencia 4: Limpiar Filtros
+' Describe el flujo cuando el Administrador limpia los filtros aplicados
+' ============================================================================
+
+title Secuencia 4: Limpiar Filtros
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+
+actor "Administrador" as admin
+participant "Navegador Web" as browser
+participant "JavaScript\n(dashboard.js)" as js
+participant "Django API\n(dashboard_api)" as api
+participant "Helper Functions" as helpers
+database "MySQL DB" as db
+
+' ============================================================================
+' FLUJO PRINCIPAL
+' ============================================================================
+
+admin -> browser: Click en "Limpiar Filtros"
+activate browser
+
+browser -> js: addEventListener('click')
+activate js
+
+' Limpiar formulario
+js -> js: document.getElementById('filter-form').reset()
+
+note right of js
+  Limpia todos los campos:
+  - fecha_desde = ''
+  - fecha_hasta = ''
+  - estado = ''
+  - usuario = ''
+  - id_proyecto = ''
+  - nom_proyecto = ''
+  - componente = ''
+end note
+
+' Simular click en "Aplicar Filtros"
+js -> js: applyFiltersBtn.click()
+
+note right of js
+  Reutiliza el flujo de
+  "Aplicar Filtros" pero
+  con formulario vacío
+end note
+
+js -> js: Mostrar loading indicator
+
+' Enviar request AJAX sin parámetros
+js -> api: fetch('/workflow/dashboard-api/')\n(sin query params)
+activate api
+
+api -> api: @login_required + verificar role
+
+' Obtener todos los workflows
+api -> helpers: _get_workflows_with_latest_activity()
+activate helpers
+helpers -> db: SELECT workflows
+activate db
+db --> helpers: Todos los workflows
+deactivate db
+helpers --> api: workflows_data
+deactivate helpers
+
+' Aplicar filtros (vacíos = sin filtrar)
+api -> helpers: _apply_admin_filters(request, workflows_data)
+activate helpers
+helpers -> helpers: request.GET sin parámetros\n→ No aplica ningún filtro
+helpers --> api: filtered_workflows\n(todos los workflows)
+deactivate helpers
+
+' Calcular estadísticas completas
+api -> helpers: _calculate_workflow_stats(filtered_workflows)
+activate helpers
+helpers --> api: stats dict (datos completos)
+deactivate helpers
+
+' Calcular matriz completa
+api -> helpers: _calculate_process_state_matrix(filtered_workflows)
+activate helpers
+helpers --> api: matrix dict (datos completos)
+deactivate helpers
+
+' Preparar detalles completos
+api -> helpers: _prepare_workflow_details(filtered_workflows)
+activate helpers
+helpers -> db: SELECT ALL actividades
+activate db
+db --> helpers: Todas las actividades históricas
+deactivate db
+helpers --> api: workflow_details list (completo)
+deactivate helpers
+
+api -> api: JsonResponse con datos completos
+api --> js: JSON response (sin filtros)
+deactivate api
+
+' Actualizar DOM con datos completos
+js -> js: Actualizar tarjetas:\nstats sin filtros
+
+js -> js: Actualizar matriz:\nmatrix sin filtros
+
+js -> js: Actualizar tabla:\nTODAS las actividades
+
+js -> js: Actualizar contador:\ntotal sin filtros
+
+js -> js: Ocultar loading indicator
+
+js --> browser: DOM actualizado con datos completos
+deactivate js
+
+browser --> admin: Muestra dashboard completo\nsin filtros aplicados
+deactivate browser
+
+note right of admin
+  El dashboard muestra ahora:
+  - Todas las estadísticas globales
+  - Matriz completa
+  - Todas las actividades históricas
+  - Formulario limpio
+end note
+
+@enduml

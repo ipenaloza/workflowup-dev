@@ -1,0 +1,8 @@
+# Prompt 002: Fix Historical Activities List
+Executed: martes, 16 de diciembre de 2025, 15:57:51 -03
+Status: Completed successfully
+Issue Fixed: List was showing only latest activity per workflow, now shows complete history
+Files modified:
+- workflowup/workflow/views.py (_prepare_workflow_details function)
+- workflowup/workflow/templates/workflow/dashboard.html (counter text)
+Result: 95 activities displayed (was 9)

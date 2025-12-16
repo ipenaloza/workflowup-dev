@@ -6,9 +6,11 @@ from django.contrib.auth.decorators import login_required
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied
-from django.db.models import Max, Q
-from django.http import JsonResponse
+from django.db.models import Max, Q, OuterRef, Subquery, Count
+from django.http import JsonResponse, HttpResponse
 from django.utils import timezone
+import csv
+from datetime import datetime
 from .models import Workflow, PlanPruebaQA, Actividad
 from .forms import WorkflowCreateForm, PlanPruebaCreateForm, ReleaseUpdateForm, LineaBaseUpdateForm, FechasUpdateForm, CodigoRMUpdateForm
 
@@ -198,7 +200,60 @@ def dashboard(request):
         }
         return render(request, 'workflow/dashboard_qa.html', context)
 
-    # Default dashboard for other roles
+    # Dashboard for Administrator role
+    elif request.user.role == 'Administrador':
+        # Get all workflows with their latest activity
+        workflows_with_latest = _get_workflows_with_latest_activity()
+
+        # Apply filters if provided
+        filtered_workflows = _apply_admin_filters(request, workflows_with_latest)
+
+        # Calculate statistics
+        stats = _calculate_workflow_stats(filtered_workflows)
+
+        # Calculate process/state matrix
+        matrix = _calculate_process_state_matrix(filtered_workflows)
+
+        # Prepare detailed list
+        workflow_details = _prepare_workflow_details(filtered_workflows)
+
+        # Get filter options
+        usuarios = Actividad.objects.values_list('usuario', flat=True).distinct().order_by('usuario')
+
+        # Prepare matrix for template (flattened structure)
+        matrix_rows = []
+        proceso_labels = {
+            'linea base': 'Línea Base',
+            'RM Rev': 'RM Rev',
+            'Diff Info': 'Diff Info',
+            'QA': 'QA'
+        }
+        for proceso in ['linea base', 'RM Rev', 'Diff Info', 'QA']:
+            matrix_rows.append({
+                'proceso': proceso,
+                'label': proceso_labels[proceso],
+                'en_proceso': matrix[proceso]['En Proceso'],
+                'ok': matrix[proceso]['Ok'],
+                'no_ok': matrix[proceso]['No Ok'],
+            })
+
+        context = {
+            'stats': stats,
+            'matrix_rows': matrix_rows,
+            'workflow_details': workflow_details,
+            'usuarios': usuarios,
+            # Filter values for form persistence
+            'filter_fecha_desde': request.GET.get('fecha_desde', ''),
+            'filter_fecha_hasta': request.GET.get('fecha_hasta', ''),
+            'filter_estado': request.GET.get('estado', ''),
+            'filter_usuario': request.GET.get('usuario', ''),
+            'filter_id_proyecto': request.GET.get('id_proyecto', ''),
+            'filter_nom_proyecto': request.GET.get('nom_proyecto', ''),
+            'filter_componente': request.GET.get('componente', ''),
+        }
+        return render(request, 'workflow/dashboard.html', context)
+
+    # Default dashboard for other roles (if any)
     context = {
         'user': request.user,
     }
@@ -960,3 +1015,291 @@ def qa_toggle_rechazar_ajax(request, id_workflow, id_prueba):
 
     except Exception as e:
         return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+# ============================================================================
+# ADMINISTRATOR DASHBOARD HELPER FUNCTIONS
+# ============================================================================
+
+def _get_workflows_with_latest_activity():
+    """
+    Get all workflows with their latest activity data.
+    Returns a list of dicts with workflow and latest activity info.
+    """
+    all_workflows = Workflow.objects.all().prefetch_related('actividades')
+
+    workflows_data = []
+    for workflow in all_workflows:
+        latest_activity = workflow.get_actividad_workflow()
+        if latest_activity:
+            workflows_data.append({
+                'workflow': workflow,
+                'latest_activity': latest_activity,
+                'estado_workflow': latest_activity.estado_workflow,
+                'proceso': latest_activity.proceso or 'N/A',
+                'estado_proceso': latest_activity.estado_proceso or 'N/A',
+                'usuario': latest_activity.usuario,
+                'fecha': latest_activity.fecha,
+                'comentario': latest_activity.comentario or '',
+            })
+
+    return workflows_data
+
+
+def _apply_admin_filters(request, workflows_data):
+    """
+    Apply filters from GET parameters to workflow data.
+    """
+    # Get filter parameters
+    fecha_desde = request.GET.get('fecha_desde', '').strip()
+    fecha_hasta = request.GET.get('fecha_hasta', '').strip()
+    estado = request.GET.get('estado', '').strip()
+    usuario = request.GET.get('usuario', '').strip()
+    id_proyecto = request.GET.get('id_proyecto', '').strip()
+    nom_proyecto = request.GET.get('nom_proyecto', '').strip()
+    componente = request.GET.get('componente', '').strip()
+
+    filtered_data = []
+
+    for wf_data in workflows_data:
+        workflow = wf_data['workflow']
+
+        # Filter by creation date range
+        if fecha_desde:
+            try:
+                from datetime import datetime
+                fecha_desde_dt = datetime.strptime(fecha_desde, '%Y-%m-%d').date()
+                if workflow.creacion < fecha_desde_dt:
+                    continue
+            except ValueError:
+                pass
+
+        if fecha_hasta:
+            try:
+                from datetime import datetime
+                fecha_hasta_dt = datetime.strptime(fecha_hasta, '%Y-%m-%d').date()
+                if workflow.creacion > fecha_hasta_dt:
+                    continue
+            except ValueError:
+                pass
+
+        # Filter by workflow state
+        if estado and wf_data['estado_workflow'] != estado:
+            continue
+
+        # Filter by user
+        if usuario and wf_data['usuario'] != usuario:
+            continue
+
+        # Filter by project ID (case-insensitive contains)
+        if id_proyecto and id_proyecto.lower() not in workflow.id_proyecto.lower():
+            continue
+
+        # Filter by project name (case-insensitive contains)
+        if nom_proyecto and nom_proyecto.lower() not in workflow.nom_proyecto.lower():
+            continue
+
+        # Filter by component (case-insensitive contains)
+        if componente and componente.lower() not in workflow.componente.lower():
+            continue
+
+        filtered_data.append(wf_data)
+
+    return filtered_data
+
+
+def _calculate_workflow_stats(workflows_data):
+    """
+    Calculate statistics for summary cards.
+    Returns dict with counts for each workflow state.
+    """
+    stats = {
+        'total': len(workflows_data),
+        'nuevo': 0,
+        'activo': 0,
+        'cerrado': 0,
+        'cancelado': 0,
+    }
+
+    for wf_data in workflows_data:
+        estado = wf_data['estado_workflow']
+        if estado == 'Nuevo':
+            stats['nuevo'] += 1
+        elif estado == 'Activo':
+            stats['activo'] += 1
+        elif estado == 'Cerrado':
+            stats['cerrado'] += 1
+        elif estado == 'Cancelado':
+            stats['cancelado'] += 1
+
+    return stats
+
+
+def _calculate_process_state_matrix(workflows_data):
+    """
+    Calculate process/state matrix showing count of workflows in each combination.
+    Returns a dict with process as keys, and estado_proceso counts as values.
+    """
+    # Define all possible combinations
+    procesos = ['linea base', 'RM Rev', 'Diff Info', 'QA']
+    estados_proceso = ['En Proceso', 'Ok', 'No Ok']
+
+    # Initialize matrix with zeros
+    matrix = {}
+    for proceso in procesos:
+        matrix[proceso] = {estado: 0 for estado in estados_proceso}
+
+    # Count workflows for each combination
+    for wf_data in workflows_data:
+        proceso = wf_data['proceso']
+        estado_proceso = wf_data['estado_proceso']
+
+        if proceso in procesos and estado_proceso in estados_proceso:
+            matrix[proceso][estado_proceso] += 1
+
+    return matrix
+
+
+def _prepare_workflow_details(workflows_data):
+    """
+    Prepare COMPLETE historical activity list for display.
+    Returns ALL activities from the filtered workflows, not just the latest one.
+    """
+    # Extract workflow IDs from the filtered workflows
+    workflow_ids = [wf_data['workflow'].id_workflow for wf_data in workflows_data]
+
+    # Get ALL activities from these workflows (complete history)
+    all_activities = Actividad.objects.filter(
+        workflow_id__in=workflow_ids
+    ).select_related('workflow').order_by('-fecha', 'workflow_id', '-id_actividad')
+
+    # Prepare details list with ALL activities
+    details = []
+    for activity in all_activities:
+        details.append({
+            'id_workflow': activity.workflow.id_workflow,
+            'nom_proyecto': activity.workflow.nom_proyecto,
+            'componente': activity.workflow.componente or '',
+            'id_proyecto': activity.workflow.id_proyecto,
+            'estado_workflow': activity.estado_workflow,
+            'proceso': activity.proceso or 'N/A',
+            'estado_proceso': activity.estado_proceso or 'N/A',
+            'usuario': activity.usuario,
+            'fecha': activity.fecha,
+            'comentario': activity.comentario or '',
+        })
+
+    return details
+
+
+# ============================================================================
+# ADMINISTRATOR DASHBOARD API ENDPOINT
+# ============================================================================
+
+@login_required
+def dashboard_api(request):
+    """
+    API endpoint for AJAX filtering on administrator dashboard.
+    Returns JSON with updated statistics, matrix, and workflow list.
+    """
+    # Verify user is administrator
+    if request.user.role != 'Administrador':
+        return JsonResponse({'success': False, 'error': 'Acceso denegado'}, status=403)
+
+    try:
+        # Get all workflows with their latest activity
+        workflows_with_latest = _get_workflows_with_latest_activity()
+
+        # Apply filters
+        filtered_workflows = _apply_admin_filters(request, workflows_with_latest)
+
+        # Calculate statistics
+        stats = _calculate_workflow_stats(filtered_workflows)
+
+        # Calculate matrix
+        matrix = _calculate_process_state_matrix(filtered_workflows)
+
+        # Prepare detailed list
+        workflow_details = _prepare_workflow_details(filtered_workflows)
+
+        # Convert datetime objects to strings for JSON serialization
+        for detail in workflow_details:
+            if detail['fecha']:
+                detail['fecha'] = detail['fecha'].strftime('%Y-%m-%d %H:%M:%S')
+
+        return JsonResponse({
+            'success': True,
+            'stats': stats,
+            'matrix': matrix,
+            'workflow_details': workflow_details,
+        })
+
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+# ============================================================================
+# CSV EXPORT FUNCTIONALITY
+# ============================================================================
+
+@login_required
+def export_workflows_csv(request):
+    """
+    Export COMPLETE historical activities to CSV file.
+    Exports ALL activities from filtered workflows, not just the latest ones.
+    """
+    # Verify user is administrator
+    if request.user.role != 'Administrador':
+        raise PermissionDenied("Solo los administradores pueden exportar datos.")
+
+    # Get all workflows with their latest activity (for filtering purposes)
+    workflows_with_latest = _get_workflows_with_latest_activity()
+
+    # Apply filters (same as dashboard)
+    filtered_workflows = _apply_admin_filters(request, workflows_with_latest)
+
+    # Prepare detailed list with ALL historical activities
+    workflow_details = _prepare_workflow_details(filtered_workflows)
+
+    # Create CSV response
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    filename = f'workflows_report_{timestamp}.csv'
+
+    response = HttpResponse(content_type='text/csv; charset=utf-8')
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+
+    # Add UTF-8 BOM for Excel compatibility
+    response.write('\ufeff')
+
+    # Create CSV writer
+    writer = csv.writer(response)
+
+    # Write header
+    writer.writerow([
+        'ID Workflow',
+        'Proyecto',
+        'Componente',
+        'ID Proyecto',
+        'Estado Workflow',
+        'Proceso',
+        'Estado Proceso',
+        'Usuario',
+        'Fecha',
+        'Comentario'
+    ])
+
+    # Write data rows (ALL historical activities)
+    for detail in workflow_details:
+        writer.writerow([
+            detail['id_workflow'],
+            detail['nom_proyecto'],
+            detail['componente'],
+            detail['id_proyecto'],
+            detail['estado_workflow'],
+            detail['proceso'],
+            detail['estado_proceso'],
+            detail['usuario'],
+            detail['fecha'].strftime('%Y-%m-%d %H:%M:%S') if detail['fecha'] else '',
+            detail['comentario'],
+        ])
+
+    return response

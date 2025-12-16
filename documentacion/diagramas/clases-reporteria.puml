@@ -1,0 +1,341 @@
+@startuml clases-reporteria
+' ============================================================================
+' Diagrama de Clases - Dashboard de Reportería (Administrador)
+' WorkflowUp - Sistema de gestión de workflows
+' Arquitectura MVC/Entity-Control-Boundary
+' ============================================================================
+
+title Diagrama de Clases - Dashboard de Reportería (Administrador)
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam linetype ortho
+
+' ============================================================================
+' CAPA ENTIDAD (Entity) - Modelos de Datos
+' ============================================================================
+package "Modelos (Entity)" #LightBlue {
+
+  class Workflow {
+    ' ============= ATRIBUTOS =============
+    - id_workflow: Integer <<PK>>
+    - id_proyecto: String(8)
+    - nom_proyecto: String(70)
+    - jefe_proyecto: String(15)
+    - desc_proyecto: Text
+    - componente: String(30)
+    - linea_base: String(80) <<nullable>>
+    - codigo_rm: String(9) <<nullable>>
+    - release: String(80) <<nullable>>
+    - creacion: Date <<auto_now_add>>
+    - qa_estimado: Date
+    - pap_estimado: Date
+
+    ' ============= MÉTODOS =============
+    + __str__(): String
+    + clean(): void
+    + get_actividad_workflow(): Actividad
+    + get_actividad_scm1(): Actividad
+    + get_actividad_rm(): Actividad
+    + get_actividad_scm2(): Actividad
+    + get_actividad_qa(): Actividad
+  }
+
+  class Actividad {
+    ' ============= ATRIBUTOS =============
+    - id: Integer <<PK>>
+    - workflow_id: Integer <<FK>>
+    - id_actividad: Integer
+    - fecha: DateTime <<auto_now_add>>
+    - usuario: String(15)
+    - estado_workflow: String(20) <<nullable>>
+    - proceso: String(20) <<nullable>>
+    - estado_proceso: String(20) <<nullable>>
+    - actividad: String(35)
+    - comentario: String(200) <<nullable>>
+
+    ' ============= MÉTODOS =============
+    + __str__(): String
+  }
+
+  class PlanPruebaQA {
+    ' ============= ATRIBUTOS =============
+    - id: Integer <<PK>>
+    - workflow_id: Integer <<FK>>
+    - id_prueba: Integer
+    - prueba: String(80)
+    - avance: Integer <<0-100>>
+    - resultado: String(20)
+
+    ' ============= MÉTODOS =============
+    + __str__(): String
+  }
+
+  ' Relaciones entre modelos
+  Workflow "1" -- "0..*" Actividad : tiene >
+  Workflow "1" -- "0..*" PlanPruebaQA : tiene >
+
+  note right of Workflow
+    Modelo principal que representa
+    un flujo de trabajo de release.
+
+    Estados: Nuevo, Activo,
+    Cerrado, Cancelado
+  end note
+
+  note right of Actividad
+    Log inmutable de actividades.
+    Registra todos los cambios de
+    estado y transiciones de proceso.
+
+    Procesos: linea base, RM Rev,
+    Diff Info, QA
+
+    Estados proceso: No Iniciado,
+    En Proceso, Ok, No Ok
+  end note
+}
+
+' ============================================================================
+' CAPA CONTROL - Vistas y Lógica de Negocio
+' ============================================================================
+package "Vistas y Lógica (Control)" #LightGreen {
+
+  class DashboardView <<function>> {
+    ' ============= MÉTODOS =============
+    + dashboard(request: HttpRequest): HttpResponse
+    + dashboard_api(request: HttpRequest): JsonResponse
+    + export_workflows_csv(request: HttpRequest): HttpResponse
+  }
+
+  class HelperFunctions <<module>> {
+    ' ============= FUNCIONES =============
+    + _get_workflows_with_latest_activity(): List[Dict]
+    + _apply_admin_filters(request: HttpRequest, workflows_data: List[Dict]): List[Dict]
+    + _calculate_workflow_stats(workflows_data: List[Dict]): Dict
+    + _calculate_process_state_matrix(workflows_data: List[Dict]): Dict
+    + _prepare_workflow_details(workflows_data: List[Dict]): List[Dict]
+  }
+
+  note right of DashboardView
+    Vista principal del dashboard:
+
+    - dashboard(): Renderiza HTML inicial
+    - dashboard_api(): Endpoint AJAX
+      para filtros dinámicos
+    - export_workflows_csv(): Exporta
+      datos filtrados a CSV
+
+    Decoradores:
+    - @login_required
+    - Verificación role == "Administrador"
+  end note
+
+  note right of HelperFunctions
+    Funciones auxiliares para
+    procesamiento de datos:
+
+    1. Obtener workflows con última actividad
+    2. Aplicar filtros múltiples
+    3. Calcular estadísticas (5 tarjetas)
+    4. Calcular matriz 4x3
+    5. Preparar lista completa de actividades
+  end note
+
+  ' Relaciones entre vistas y helpers
+  DashboardView ..> HelperFunctions : usa
+}
+
+' ============================================================================
+' CAPA BOUNDARY - Interfaz de Usuario
+' ============================================================================
+package "Interfaz (Boundary)" #LightYellow {
+
+  class DashboardTemplate <<HTML/JavaScript>> {
+    ' ============= ELEMENTOS DOM =============
+    - statsCards: HTMLElement
+    - matrixTable: HTMLElement
+    - detailsTable: HTMLElement
+    - filterForm: HTMLElement
+    - applyFiltersBtn: HTMLElement
+    - clearFiltersBtn: HTMLElement
+    - exportCsvBtn: HTMLElement
+    - loadingIndicator: HTMLElement
+
+    ' ============= MÉTODOS JAVASCRIPT =============
+    + renderCards(stats: Object): void
+    + renderMatrix(matrix: Object): void
+    + renderTable(details: Array): void
+    + applyFilters(): void
+    + clearFilters(): void
+    + exportCSV(): void
+    + updateDashboard(data: Object): void
+    - getEstadoWorkflowClass(estado: String): String
+    - getEstadoProcesoClass(estado: String): String
+    - getCookie(name: String): String
+  }
+
+  note right of DashboardTemplate
+    Template dashboard.html con JavaScript:
+
+    Componentes visuales:
+    - 5 tarjetas estadísticas
+    - Matriz 4x3 (proceso x estado)
+    - Tabla actividades históricas
+    - Formulario de filtros (7 campos)
+    - Botones: Aplicar, Limpiar, Exportar
+
+    Funcionalidad AJAX:
+    - Actualización dinámica sin recargar
+    - Loading indicator durante peticiones
+    - Clases CSS dinámicas por estado
+  end note
+}
+
+' ============================================================================
+' OBJETOS DE TRANSFERENCIA DE DATOS (DTOs)
+' ============================================================================
+package "Objetos de Respuesta" #Lavender {
+
+  class StatsData <<dataclass>> {
+    + total: Integer
+    + nuevo: Integer
+    + activo: Integer
+    + cerrado: Integer
+    + cancelado: Integer
+  }
+
+  class MatrixData <<dataclass>> {
+    + linea_base: Dict
+    + RM_Rev: Dict
+    + Diff_Info: Dict
+    + QA: Dict
+  }
+
+  class MatrixRow <<dataclass>> {
+    + En_Proceso: Integer
+    + Ok: Integer
+    + No_Ok: Integer
+  }
+
+  class WorkflowDetail <<dataclass>> {
+    + id_workflow: Integer
+    + nom_proyecto: String
+    + componente: String
+    + id_proyecto: String
+    + estado_workflow: String
+    + proceso: String
+    + estado_proceso: String
+    + usuario: String
+    + fecha: String
+    + comentario: String
+  }
+
+  class WorkflowWithLatestActivity <<dataclass>> {
+    + workflow: Workflow
+    + latest_activity: Actividad
+    + estado_workflow: String
+    + proceso: String
+    + estado_proceso: String
+    + usuario: String
+    + fecha: DateTime
+    + comentario: String
+  }
+
+  ' Relación entre matriz y fila
+  MatrixData "1" *-- "4" MatrixRow : contiene
+
+  note right of StatsData
+    Datos para las 5 tarjetas
+    de resumen en el dashboard
+  end note
+
+  note right of MatrixData
+    Matriz de distribución
+    proceso x estado
+    (4 procesos x 3 estados)
+  end note
+
+  note right of WorkflowDetail
+    Representa UNA actividad
+    histórica para la tabla.
+
+    IMPORTANTE: Se retornan
+    TODAS las actividades,
+    no solo la última.
+  end note
+}
+
+' ============================================================================
+' RELACIONES ENTRE CAPAS
+' ============================================================================
+
+' Control → Entity
+DashboardView ..> Workflow : consulta
+DashboardView ..> Actividad : consulta
+HelperFunctions ..> Workflow : opera sobre
+HelperFunctions ..> Actividad : opera sobre
+
+' Control → DTOs
+DashboardView ..> StatsData : genera
+DashboardView ..> MatrixData : genera
+DashboardView ..> WorkflowDetail : genera
+HelperFunctions ..> WorkflowWithLatestActivity : genera
+
+' Boundary → Control
+DashboardTemplate ..> DashboardView : HTTP/AJAX
+
+' Boundary → DTOs (consume)
+DashboardTemplate ..> StatsData : consume
+DashboardTemplate ..> MatrixData : consume
+DashboardTemplate ..> WorkflowDetail : consume
+
+' ============================================================================
+' NOTAS ADICIONALES
+' ============================================================================
+
+note as N1
+  <b>Flujo de Datos</b>
+
+  1. <b>Carga Inicial</b>
+     DashboardTemplate → DashboardView.dashboard()
+     → HelperFunctions → Workflow/Actividad
+     → Renderiza HTML con datos
+
+  2. <b>Filtros AJAX</b>
+     DashboardTemplate.applyFilters()
+     → DashboardView.dashboard_api()
+     → HelperFunctions (con filtros)
+     → JsonResponse → Actualiza DOM
+
+  3. <b>Exportar CSV</b>
+     DashboardTemplate.exportCSV()
+     → DashboardView.export_workflows_csv()
+     → HelperFunctions → CSV file
+end note
+
+note as N2
+  <b>Patrones de Diseño Aplicados</b>
+
+  - <b>MVC</b>: Separación Model-View-Controller
+  - <b>Helper Functions</b>: Lógica reutilizable
+  - <b>DTO</b>: Objetos de transferencia de datos
+  - <b>AJAX</b>: Comunicación asíncrona
+  - <b>Query Optimization</b>: prefetch_related,
+    select_related, subqueries
+end note
+
+note as N3
+  <b>Características Clave</b>
+
+  - Filtros múltiples (7 criterios)
+  - Actualización dinámica sin recargar
+  - Exportación CSV con filtros aplicados
+  - Historial completo de actividades
+  - Matriz de distribución proceso/estado
+  - Estadísticas en tiempo real
+  - Autenticación y autorización por rol
+end note
+
+@enduml

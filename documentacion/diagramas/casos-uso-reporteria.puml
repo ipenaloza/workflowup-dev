@@ -1,0 +1,117 @@
+@startuml casos-uso-reporteria
+' ============================================================================
+' Diagrama de Casos de Uso - Dashboard de Reportería (Administrador)
+' WorkflowUp - Sistema de gestión de workflows
+' ============================================================================
+
+title Casos de Uso - Dashboard de Reportería (Administrador)
+
+left to right direction
+skinparam packageStyle rectangle
+skinparam actorStyle awesome
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+
+' ============================================================================
+' ACTORES
+' ============================================================================
+actor "Administrador" as admin <<Usuario>>
+actor "Sistema\nDjango" as sistema <<Sistema>>
+actor "Base de Datos\nMySQL" as db <<Sistema>>
+
+' ============================================================================
+' PAQUETE PRINCIPAL
+' ============================================================================
+rectangle "Dashboard de Reportería" {
+
+  ' Casos de Uso Principales
+  usecase "Ver Dashboard\nde Reportería" as UC1
+  usecase "Visualizar\nEstadísticas Generales" as UC2
+  usecase "Visualizar Matriz\nProceso/Estado" as UC3
+  usecase "Consultar Lista de\nActividades Históricas" as UC4
+  usecase "Aplicar Filtros" as UC5
+  usecase "Limpiar Filtros" as UC6
+  usecase "Exportar Datos\na CSV" as UC7
+
+  ' Casos de Uso de Sistema
+  usecase "Actualizar Dashboard\nDinámicamente" as UC8
+  usecase "Autenticarse" as UC9
+  usecase "Verificar\nPermisos" as UC10
+  usecase "Consultar\nBase de Datos" as UC11
+
+  ' ============================================================================
+  ' RELACIONES ENTRE CASOS DE USO
+  ' ============================================================================
+
+  ' Ver Dashboard - Include
+  UC1 ..> UC9 : <<include>>
+  UC1 ..> UC10 : <<include>>
+
+  ' Ver Dashboard - Extend
+  UC2 ..|> UC1 : <<extend>>
+  UC3 ..|> UC1 : <<extend>>
+  UC4 ..|> UC1 : <<extend>>
+
+  ' Aplicar Filtros - Include
+  UC5 ..> UC8 : <<include>>
+
+  ' Limpiar Filtros - Include
+  UC6 ..> UC8 : <<include>>
+
+  ' Exportar CSV - Include
+  UC7 ..> UC5 : <<include>>
+
+  ' Actualizar Dashboard - Include
+  UC8 ..> UC11 : <<include>>
+}
+
+' ============================================================================
+' ASOCIACIONES ACTOR-CASOS DE USO
+' ============================================================================
+
+' Administrador
+admin --> UC1 : accede
+admin --> UC5 : aplica
+admin --> UC6 : limpia
+admin --> UC7 : exporta
+
+' Sistema Django
+sistema --> UC8 : ejecuta
+sistema --> UC10 : verifica
+
+' Base de Datos
+db --> UC11 : responde
+
+' ============================================================================
+' NOTAS EXPLICATIVAS
+' ============================================================================
+note right of UC1
+  Muestra el dashboard con 3 secciones:
+  1. 5 tarjetas de estadísticas
+  2. Matriz proceso/estado (4x3)
+  3. Tabla de actividades históricas
+end note
+
+note right of UC5
+  Filtros disponibles:
+  - Fecha desde/hasta
+  - Estado workflow
+  - Usuario
+  - ID Proyecto
+  - Nombre Proyecto
+  - Componente
+end note
+
+note right of UC7
+  Exporta TODAS las actividades
+  históricas de los workflows filtrados
+  (no solo la última actividad)
+end note
+
+note right of UC8
+  Actualización vía AJAX sin
+  recargar la página completa.
+  Actualiza: stats, matriz y tabla.
+end note
+
+@enduml
